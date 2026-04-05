@@ -96,7 +96,7 @@ function App() {
 
 
         {/* State Selector */}
-        <div style={{ marginBottom: '24px' }}>
+        <div>
           <Select 
             options={states} 
             value={currentState} 
@@ -107,7 +107,7 @@ function App() {
 
         {/* Critical Risk Zones */}
         {/* Critical Risk Zones */}
-        <div style={{ marginBottom: '24px' }}>
+        <div>
           <label className="text-xs font-semibold text-error uppercase tracking-wider mb-3 flex items-center gap-2">
             <Siren size={14} /> Critical Risk Zones
           </label>
@@ -132,7 +132,7 @@ function App() {
         </div>
 
         {/* Live Intel Feed */}
-        <div className="card" style={{ marginBottom: '24px', padding: '16px', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
+        <div className="card" style={{ padding: '16px', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Radio size={16} className="text-accent-cyan" />
@@ -145,7 +145,7 @@ function App() {
         </div>
 
         {/* Model Health / Metrics */}
-        <div style={{ marginBottom: '24px' }}>
+        <div>
           <label className="text-xs font-semibold text-tertiary uppercase tracking-wider mb-2 flex items-center gap-2">
             <Server size={14} /> Model Health
           </label>
@@ -181,8 +181,12 @@ function App() {
       {/* Main Content Workspace */}
       <main className="main-content flex flex-col">
         
+        <div>
+          <h2 className="text-3xl font-bold mb-4 tracking-tight">Risk Intelligence Dashboard</h2>
+        </div>
+
         {/* Top Navigation Bar */}
-        <header className="flex items-center justify-between mb-6 pb-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        <header className="flex items-center justify-between mb-8 pb-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
           {/* Breadcrumbs */}
           <div className="flex items-center gap-2 text-sm text-secondary font-medium tracking-wide">
             <span>Terminal</span>
@@ -203,11 +207,6 @@ function App() {
             </div>
           </div>
         </header>
-
-        <div>
-          <h2 className="text-3xl font-bold mb-2 tracking-tight">Risk Intelligence Dashboard</h2>
-          <p className="text-md text-secondary mb-6">Predicting regional anomalies utilizing deep ensemble analytics.</p>
-        </div>
 
         <div className="flex-1">
           {loading ? (

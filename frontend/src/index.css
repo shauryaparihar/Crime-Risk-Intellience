@@ -112,6 +112,7 @@ body {
   -webkit-backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
+  gap: 24px;
   padding: var(--space-4) var(--space-3);
   position: fixed;
   top: 0;

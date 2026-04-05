@@ -67,7 +67,7 @@ export default function DashboardForecast({ state, apiBase }) {
       {error && <ErrorBanner />}
       
       {/* Metric Cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-3 mb-8" style={{ gap: '24px' }}>
         <Card className="card-metric border-subtle">
           <div className="flex items-center gap-2 mb-2 text-secondary">
             <Activity size={18} className="text-warning" />
@@ -92,7 +92,7 @@ export default function DashboardForecast({ state, apiBase }) {
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2" style={{ gap: '24px' }}>
         {/* Model Comparison */}
         <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
           <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)' }}>
