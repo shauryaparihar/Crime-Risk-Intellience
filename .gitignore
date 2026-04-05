@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+venv/
+env/
+*.egg-info/
+
+# Trained model artifacts (generated at runtime via models.py)
+backend/models/*.pkl
+
+# Data (tracked via Git LFS or excluded)
+# backend/data/crime_data.csv  # uncomment to exclude the dataset too
+
+# macOS
+.DS_Store
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
