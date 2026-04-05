@@ -113,7 +113,7 @@ function App() {
         </div>
 
         {/* State Selector */}
-        <div className="mb-6">
+        <div className="mb-8">
           <label className="text-xs font-semibold text-tertiary uppercase tracking-wider mb-2 flex items-center gap-2">
             <Crosshair size={14} /> Target Region
           </label>
@@ -126,11 +126,11 @@ function App() {
         </div>
 
         {/* Critical Risk Zones */}
-        <div className="mb-6">
-          <label className="text-xs font-semibold text-error uppercase tracking-wider mb-2 flex items-center gap-2">
+        <div className="mb-8">
+          <label className="text-xs font-semibold text-error uppercase tracking-wider mb-3 flex items-center gap-2">
             <Siren size={14} /> Critical Risk Zones
           </label>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {globalRisk.length > 0 ? globalRisk.map((r, i) => {
               // Deterministic fake trend based on index just for visual flair
               const trend = (4.2 + (i * 1.7)).toFixed(1);
@@ -151,7 +151,7 @@ function App() {
         </div>
 
         {/* Live Intel Feed */}
-        <div className="card mb-6" style={{ padding: '14px', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
+        <div className="card mb-8" style={{ padding: '16px', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Radio size={16} className="text-accent-cyan" />
@@ -164,7 +164,7 @@ function App() {
         </div>
 
         {/* Model Health / Metrics */}
-        <div className="mb-6">
+        <div className="mb-8">
           <label className="text-xs font-semibold text-tertiary uppercase tracking-wider mb-2 flex items-center gap-2">
             <Server size={14} /> Model Health
           </label>
@@ -195,7 +195,7 @@ function App() {
         </div>
 
         {/* Bottom Profile / Status Component */}
-        <div className="mt-auto">
+        <div className="mt-4">
           <div className="card flex items-center gap-3" style={{ padding: '12px', backgroundColor: 'rgba(255,255,255,0.02)' }}>
             <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '50%' }}>
               <User size={20} className="text-secondary" />
