@@ -12,7 +12,7 @@ import DashboardRisk from './components/DashboardRisk';
 import DashboardMap from './components/DashboardMap';
 
 const API_BASE = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL}/api`
+  ? `${import.meta.env.VITE_API_URL.replace(/\/+$/, '')}/api`
   : 'http://localhost:8001/api';
 
 function App() {
