@@ -11,7 +11,9 @@ import DashboardCrimePattern from './components/DashboardCrimePattern';
 import DashboardRisk from './components/DashboardRisk';
 import DashboardMap from './components/DashboardMap';
 
-const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:8001/api';
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : 'http://localhost:8001/api';
 
 function App() {
   const [states, setStates] = useState([]);

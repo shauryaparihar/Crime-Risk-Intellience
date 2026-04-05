@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from contextlib import asynccontextmanager
 import numpy as np
 import pandas as pd
 import json
@@ -15,11 +16,25 @@ from models import (
     build_state_year_table,
     build_state_features,
     load_models,
+    train_all,
     MODELS_DIR,
 )
 
+MODEL_FILES = ["reg_lr.pkl", "reg_ridge.pkl", "reg_rf.pkl", "type_rf.pkl", "risk_rf.pkl"]
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Train models on startup if not present (e.g. fresh Render deploy)."""
+    missing = [f for f in MODEL_FILES if not os.path.isfile(os.path.join(MODELS_DIR, f))]
+    if missing:
+        print(f"[startup] Missing models: {missing}. Training now...")
+        train_all()
+        print("[startup] Training complete.")
+    yield
+
+
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="Crime Risk API")
+app = FastAPI(title="Crime Risk API", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
