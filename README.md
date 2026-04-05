@@ -42,7 +42,25 @@ This project was recently migrated from a basic monolithic Streamlit script into
 
 ---
 
-## 🛠️ Getting Started (Local Deployment)
+## 📊 Data Source
+
+All crime statistics powering this dashboard are sourced from the **National Crime Records Bureau (NCRB)**, published under the Indian Government's open data initiative.
+
+| Attribute | Details |
+|---|---|
+| **Source** | National Crime Records Bureau (NCRB), Ministry of Home Affairs, India |
+| **Dataset** | Crime in India — State & District-Level Reports |
+| **Coverage Years** | 2019 – 2023 |
+| **Coverage** | All 28 States & 8 Union Territories |
+| **Granularity** | State → District → Crime Type → Year |
+| **File** | `backend/data/crime_data.csv` |
+| **Last Updated** | 2022 (NCRB Annual Report cycle) |
+
+> **Note:** The dataset is included directly in the repository under `backend/data/`. No external download is required to run the application locally. The backend automatically detects the CSV on startup and builds all feature tables in memory.
+
+---
+
+
 
 Because the architecture has been decoupled, you will need to run the backend and the frontend simultaneously in two separate terminal windows.
 
