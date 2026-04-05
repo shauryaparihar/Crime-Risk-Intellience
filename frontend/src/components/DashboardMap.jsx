@@ -105,28 +105,32 @@ export default function DashboardMap({ state, apiBase }) {
           <div style={{ padding: 'var(--space-3)', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
             <h3 className="text-lg font-bold">Top Districts by Gross Volume</h3>
           </div>
-          <ul style={{ listStyle: 'none', padding: '0 var(--space-3)' }}>
+          <div className="custom-scroll" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+            <ul style={{ listStyle: 'none', padding: '0 var(--space-3)' }}>
             {drilldownData.districts_2023?.map((d, i) => (
               <li key={d.district} className="flex justify-between items-center py-3" style={{ borderBottom: i !== drilldownData.districts_2023.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
                 <span className="font-bold text-sm tracking-wide">{d.district}</span>
                 <span className="text-accent text-sm font-bold bg-[rgba(59,130,246,0.1)] px-2 py-1 rounded-md">{d.count?.toLocaleString()}</span>
               </li>
             ))}
-          </ul>
+            </ul>
+          </div>
         </div>
         
         <div className="card" style={{ padding: '0' }}>
           <div style={{ padding: 'var(--space-3)', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
-            <h3 className="text-lg font-bold">Demographic Breakdown</h3>
+            <h3 className="text-lg font-bold">Crime Type Breakdown</h3>
           </div>
-          <ul style={{ listStyle: 'none', padding: '0 var(--space-3)' }}>
+          <div className="custom-scroll" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+            <ul style={{ listStyle: 'none', padding: '0 var(--space-3)' }}>
             {drilldownData.types_2023?.map((d, i) => (
               <li key={d.type} className="flex justify-between items-center py-3" style={{ borderBottom: i !== drilldownData.types_2023.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
                 <span className="font-medium text-sm text-secondary">{d.type}</span>
                 <span className="text-main text-sm font-bold">{d.count?.toLocaleString()}</span>
               </li>
             ))}
-          </ul>
+            </ul>
+          </div>
         </div>
       </div>
     </div>

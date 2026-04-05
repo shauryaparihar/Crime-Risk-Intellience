@@ -48,7 +48,7 @@ function App() {
         setMetrics(metricsData);
         setStates(statesData.states || []);
         if (statesData.states?.length > 0) {
-          setCurrentState(statesData.states[0]);
+          // Do not auto-select, let user choose manually
         }
         if (riskData.rankings) {
           setGlobalRisk(riskData.rankings.filter(r => r.Predicted_Risk_Class === 'high').slice(0, 3));
@@ -94,23 +94,6 @@ function App() {
           <h1 className="text-xl font-bold tracking-tight leading-tight">Risk Intelligence Dashboard</h1>
         </div>
 
-        {/* Global Search Input */}
-        <div className="mb-6 relative">
-          <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-tertiary" />
-          <input 
-            type="text" 
-            placeholder="Query databases..." 
-            className="w-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] rounded-md text-sm text-main focus:outline-none focus:border-accent-primary transition-all"
-            style={{ 
-              padding: '10px 12px 10px 36px', 
-              width: '100%',
-              backgroundColor: 'rgba(0,0,0,0.2)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--text-main)'
-            }}
-          />
-        </div>
 
         {/* State Selector */}
         <div className="mb-8">
