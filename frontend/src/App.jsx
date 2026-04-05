@@ -160,7 +160,7 @@ function App() {
             <div style={{ width: '8px', height: '8px', backgroundColor: 'var(--success)', borderRadius: '50%', boxShadow: '0 0 10px var(--success)', animation: 'pulse 2s infinite' }}></div>
           </div>
           <p className="text-xs text-secondary leading-relaxed">Processing active FIR logs from regional central bureaus.</p>
-          <div className="text-[10px] text-tertiary mt-3 font-mono tracking-wider uppercase">Sync: {currentTime.toISOString().split('T')[1].split('.')[0]} UTC</div>
+          <div className="text-[10px] text-tertiary mt-3 font-mono tracking-wider uppercase">Sync: {currentTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST</div>
         </div>
 
         {/* Model Health / Metrics */}
@@ -234,7 +234,7 @@ function App() {
             {/* Live Clock */}
             <div className="flex items-center gap-2 text-sm text-secondary font-mono bg-[rgba(255,255,255,0.02)] px-3 py-1.5 rounded-md border border-[rgba(255,255,255,0.05)]">
               <Clock size={14} className="text-tertiary" />
-              {currentTime.toLocaleTimeString('en-US', { hour12: false })} UTC
+              {currentTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST
             </div>
           </div>
         </header>
