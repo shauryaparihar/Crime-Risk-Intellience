@@ -96,10 +96,7 @@ function App() {
 
 
         {/* State Selector */}
-        <div className="mb-8">
-          <label className="text-xs font-semibold text-tertiary uppercase tracking-wider mb-2 flex items-center gap-2">
-            <Crosshair size={14} /> Target Region
-          </label>
+        <div style={{ marginBottom: '24px' }}>
           <Select 
             options={states} 
             value={currentState} 
@@ -109,7 +106,8 @@ function App() {
         </div>
 
         {/* Critical Risk Zones */}
-        <div className="mb-8">
+        {/* Critical Risk Zones */}
+        <div style={{ marginBottom: '24px' }}>
           <label className="text-xs font-semibold text-error uppercase tracking-wider mb-3 flex items-center gap-2">
             <Siren size={14} /> Critical Risk Zones
           </label>
@@ -134,7 +132,7 @@ function App() {
         </div>
 
         {/* Live Intel Feed */}
-        <div className="card mb-8" style={{ padding: '16px', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
+        <div className="card" style={{ marginBottom: '24px', padding: '16px', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Radio size={16} className="text-accent-cyan" />
@@ -147,7 +145,7 @@ function App() {
         </div>
 
         {/* Model Health / Metrics */}
-        <div className="mb-8">
+        <div style={{ marginBottom: '24px' }}>
           <label className="text-xs font-semibold text-tertiary uppercase tracking-wider mb-2 flex items-center gap-2">
             <Server size={14} /> Model Health
           </label>
@@ -177,23 +175,7 @@ function App() {
           </div>
         </div>
 
-        {/* Bottom Profile / Status Component */}
-        <div className="mt-4">
-          <div className="card flex items-center gap-3" style={{ padding: '12px', backgroundColor: 'rgba(255,255,255,0.02)' }}>
-            <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '50%' }}>
-              <User size={20} className="text-secondary" />
-            </div>
-            <div className="flex-1">
-              <div className="text-sm font-bold tracking-wide">Agent #884-AX</div>
-              <div className="text-xs text-secondary flex items-center gap-1 mt-1">
-                <Lock size={10} /> Clearance Lvl 4
-              </div>
-            </div>
-            <div>
-               <Activity size={18} color={status.models_ready ? 'var(--success)' : 'var(--error)'} title={status.models_ready ? 'Models Active' : 'Offline'} />
-            </div>
-          </div>
-        </div>
+
       </aside>
 
       {/* Main Content Workspace */}
