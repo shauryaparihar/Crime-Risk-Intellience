@@ -25,10 +25,13 @@ MODEL_FILES = ["reg_lr.pkl", "reg_ridge.pkl", "reg_rf.pkl", "type_rf.pkl", "risk
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Train models on startup if not present (e.g. fresh Render deploy)."""
+    global MODELS_READY, models
     missing = [f for f in MODEL_FILES if not os.path.isfile(os.path.join(MODELS_DIR, f))]
     if missing:
         print(f"[startup] Missing models: {missing}. Training now...")
         train_all()
+        MODELS_READY = True
+        models = load_models()
         print("[startup] Training complete.")
     yield
 
