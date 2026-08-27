@@ -2,6 +2,8 @@
 
 **Risk Intelligence Dashboard** is a modern, enterprise-grade, full-stack risk intelligence terminal. It predicts regional crime anomalies, categorizes structural risks, and visualizes geographic threat distributions across India using advanced machine learning ensembles.
 
+**Live Demo**: [crime-risk-intellience-ashy.vercel.app](https://crime-risk-intellience-ashy.vercel.app)
+
 ## 🚀 Recent Architectural Overhaul
 This project was recently migrated from a basic monolithic Streamlit script into a high-performance, decoupled **Full-Stack Application**:
 
