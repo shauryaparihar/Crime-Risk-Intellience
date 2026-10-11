@@ -1,4 +1,5 @@
-import os
+from pathlib import Path
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -11,15 +12,48 @@ from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score, f1_score
 from sklearn.preprocessing import LabelEncoder
 
-DATA_PATH = "data/crime_data.csv"
-MODELS_DIR = "models"
+# All paths hang off this file's location, never the shell's current directory.
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / "data" / "crime_data.csv"
+MODELS_DIR = BASE_DIR / "models"
+GEOJSON_PATH = BASE_DIR / "india_state.geojson"
 
-os.makedirs(MODELS_DIR, exist_ok=True)
+# Single source of truth for the artifacts the app needs before it can be "ready".
+# Each name is both the key returned by load_models() and the .pkl file stem.
+ARTIFACT_NAMES = [
+    "reg_lr", "reg_ridge", "reg_rf", "reg_feat", "reg_metrics",
+    "type_rf", "type_logit", "type_enc", "type_feat", "type_metrics",
+    "risk_rf", "risk_logit", "risk_enc", "risk_feat", "risk_metrics",
+    "derived_data",
+]
+
+REQUIRED_COLUMNS = [
+    "State", "District", "Year", "Crime_Type", "Cases_Reported", "Population",
+]
+REQUIRED_YEARS = [2019, 2020, 2021, 2022, 2023]
 
 
-def load():
-    df = pd.read_csv(DATA_PATH)
+def artifact_path(name, models_dir=MODELS_DIR):
+    return Path(models_dir) / f"{name}.pkl"
+
+
+def missing_artifacts(models_dir=MODELS_DIR):
+    return [n for n in ARTIFACT_NAMES if not artifact_path(n, models_dir).is_file()]
+
+
+def validate_schema(df):
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"CSV is missing required columns: {missing}")
+    absent_years = [y for y in REQUIRED_YEARS if y not in set(df["Year"].unique())]
+    if absent_years:
+        raise ValueError(f"CSV has no rows for required years: {absent_years}")
+
+
+def load(data_path=DATA_PATH):
+    df = pd.read_csv(data_path)
     df.columns = df.columns.str.strip()
+    validate_schema(df)
     df = df[df["Year"].between(2019, 2023)].copy()
     return df
 
@@ -191,7 +225,7 @@ def safe_cv_regression(model, X, y):
     }
 
 
-def train_regression(X, y):
+def train_regression(X, y, models_dir=MODELS_DIR):
     models = regression_models()
     y_log = np.log1p(y)
 
@@ -209,16 +243,16 @@ def train_regression(X, y):
         }
         fitted[name] = model
 
-    joblib.dump(fitted["lr"], os.path.join(MODELS_DIR, "reg_lr.pkl"))
-    joblib.dump(fitted["ridge"], os.path.join(MODELS_DIR, "reg_ridge.pkl"))
-    joblib.dump(fitted["rf"], os.path.join(MODELS_DIR, "reg_rf.pkl"))
-    joblib.dump(list(X.columns), os.path.join(MODELS_DIR, "reg_feat.pkl"))
-    joblib.dump(metrics, os.path.join(MODELS_DIR, "reg_metrics.pkl"))
+    joblib.dump(fitted["lr"], Path(models_dir) / "reg_lr.pkl")
+    joblib.dump(fitted["ridge"], Path(models_dir) / "reg_ridge.pkl")
+    joblib.dump(fitted["rf"], Path(models_dir) / "reg_rf.pkl")
+    joblib.dump(list(X.columns), Path(models_dir) / "reg_feat.pkl")
+    joblib.dump(metrics, Path(models_dir) / "reg_metrics.pkl")
 
     return metrics
 
 
-def train_crime_type(X, y):
+def train_crime_type(X, y, models_dir=MODELS_DIR):
     le = LabelEncoder()
     y_enc = le.fit_transform(y)
 
@@ -240,16 +274,16 @@ def train_crime_type(X, y):
         "classes": list(le.classes_),
     }
 
-    joblib.dump(rf, os.path.join(MODELS_DIR, "type_rf.pkl"))
-    joblib.dump(logit, os.path.join(MODELS_DIR, "type_logit.pkl"))
-    joblib.dump(le, os.path.join(MODELS_DIR, "type_enc.pkl"))
-    joblib.dump(list(X.columns), os.path.join(MODELS_DIR, "type_feat.pkl"))
-    joblib.dump(metrics, os.path.join(MODELS_DIR, "type_metrics.pkl"))
+    joblib.dump(rf, Path(models_dir) / "type_rf.pkl")
+    joblib.dump(logit, Path(models_dir) / "type_logit.pkl")
+    joblib.dump(le, Path(models_dir) / "type_enc.pkl")
+    joblib.dump(list(X.columns), Path(models_dir) / "type_feat.pkl")
+    joblib.dump(metrics, Path(models_dir) / "type_metrics.pkl")
 
     return metrics
 
 
-def train_risk(X, y):
+def train_risk(X, y, models_dir=MODELS_DIR):
     le = LabelEncoder()
     y_enc = le.fit_transform(y)
 
@@ -271,17 +305,18 @@ def train_risk(X, y):
         "classes": list(le.classes_),
     }
 
-    joblib.dump(rf, os.path.join(MODELS_DIR, "risk_rf.pkl"))
-    joblib.dump(logit, os.path.join(MODELS_DIR, "risk_logit.pkl"))
-    joblib.dump(le, os.path.join(MODELS_DIR, "risk_enc.pkl"))
-    joblib.dump(list(X.columns), os.path.join(MODELS_DIR, "risk_feat.pkl"))
-    joblib.dump(metrics, os.path.join(MODELS_DIR, "risk_metrics.pkl"))
+    joblib.dump(rf, Path(models_dir) / "risk_rf.pkl")
+    joblib.dump(logit, Path(models_dir) / "risk_logit.pkl")
+    joblib.dump(le, Path(models_dir) / "risk_enc.pkl")
+    joblib.dump(list(X.columns), Path(models_dir) / "risk_feat.pkl")
+    joblib.dump(metrics, Path(models_dir) / "risk_metrics.pkl")
 
     return metrics
 
 
-def train_all():
-    df = load()
+def train_all(data_path=DATA_PATH, models_dir=MODELS_DIR):
+    Path(models_dir).mkdir(parents=True, exist_ok=True)
+    df = load(data_path)
     cols = detect(df)
 
     state_year = build_state_year_table(df, cols)
@@ -291,9 +326,9 @@ def train_all():
     state_feat_with_target = state_feat.copy()
     X_risk, y_risk = build_risk_dataset(state_feat_with_target)
 
-    reg_metrics = train_regression(X_reg, y_reg)
-    type_metrics = train_crime_type(X_type, y_type)
-    risk_metrics = train_risk(X_risk, y_risk)
+    reg_metrics = train_regression(X_reg, y_reg, models_dir)
+    type_metrics = train_crime_type(X_type, y_type, models_dir)
+    risk_metrics = train_risk(X_risk, y_risk, models_dir)
 
     artifacts = {
         "state_year": state_year,
@@ -301,7 +336,7 @@ def train_all():
         "crime_type_labels": crime_cols,
     }
 
-    joblib.dump(artifacts, os.path.join(MODELS_DIR, "derived_data.pkl"))
+    joblib.dump(artifacts, Path(models_dir) / "derived_data.pkl")
 
     return {
         "regression": reg_metrics,
@@ -310,22 +345,5 @@ def train_all():
     }
 
 
-def load_models():
-    return {
-        "reg_lr": joblib.load(os.path.join(MODELS_DIR, "reg_lr.pkl")),
-        "reg_ridge": joblib.load(os.path.join(MODELS_DIR, "reg_ridge.pkl")),
-        "reg_rf": joblib.load(os.path.join(MODELS_DIR, "reg_rf.pkl")),
-        "reg_feat": joblib.load(os.path.join(MODELS_DIR, "reg_feat.pkl")),
-        "reg_metrics": joblib.load(os.path.join(MODELS_DIR, "reg_metrics.pkl")),
-        "type_rf": joblib.load(os.path.join(MODELS_DIR, "type_rf.pkl")),
-        "type_logit": joblib.load(os.path.join(MODELS_DIR, "type_logit.pkl")),
-        "type_enc": joblib.load(os.path.join(MODELS_DIR, "type_enc.pkl")),
-        "type_feat": joblib.load(os.path.join(MODELS_DIR, "type_feat.pkl")),
-        "type_metrics": joblib.load(os.path.join(MODELS_DIR, "type_metrics.pkl")),
-        "risk_rf": joblib.load(os.path.join(MODELS_DIR, "risk_rf.pkl")),
-        "risk_logit": joblib.load(os.path.join(MODELS_DIR, "risk_logit.pkl")),
-        "risk_enc": joblib.load(os.path.join(MODELS_DIR, "risk_enc.pkl")),
-        "risk_feat": joblib.load(os.path.join(MODELS_DIR, "risk_feat.pkl")),
-        "risk_metrics": joblib.load(os.path.join(MODELS_DIR, "risk_metrics.pkl")),
-        "derived_data": joblib.load(os.path.join(MODELS_DIR, "derived_data.pkl")),
-    }
+def load_models(models_dir=MODELS_DIR):
+    return {name: joblib.load(artifact_path(name, models_dir)) for name in ARTIFACT_NAMES}

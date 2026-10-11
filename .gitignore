@@ -31,3 +31,11 @@ npm-debug.log*
 # IDE
 .vscode/
 .idea/
+
+# Private working files (never commit)
+.claude/
+plan.md
+docs/interview_notes.md
+
+# Stale generated test transcript
+backend/test_output.txt
