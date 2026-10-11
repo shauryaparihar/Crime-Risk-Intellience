@@ -1,107 +1,133 @@
 # Risk Intelligence Dashboard
 
-**Risk Intelligence Dashboard** is a modern, enterprise-grade, full-stack risk intelligence terminal. It predicts regional crime anomalies, categorizes structural risks, and visualizes geographic threat distributions across India using advanced machine learning ensembles.
+A React and FastAPI dashboard that performs a small **historical 2023 backtest** over an **unverified NCRB-style sample dataset**. It uses 2019–2022 state-level features to compare regression and classification models, visualizes observed 2023 crime rates and crime patterns, and shows model explanations and limitations.
 
-## 🚀 Recent Architectural Overhaul
-This project was recently migrated from a basic monolithic Streamlit script into a high-performance, decoupled **Full-Stack Application**:
+> **This is an educational full-stack ML demonstration.** It is not a live crime feed, not an official NCRB product, not a public-safety decision system, and not a production forecasting service.
 
-1. **Frontend (`/frontend`)**: A Lightning-fast React SPA built with Vite.
-    - Features a bespoke, premium **Obsidian Dark Mode** design system.
-    - Highly disciplined UI employing strict 8-point typographic and spatial grids.
-    - Rich visualizations using customized *Recharts* (featuring glassmorphism tooltips and linear gradients) and *Plotly.js* (Carto-Darkmatter mapped to state geojson data).
-    - Advanced UI/UX elements: Global search pallets, live UTC clocks, blinking intel feeds, and agent clearance avatars.
-2. **Backend (`/backend`)**: A highly concurrent RESTful API built on **FastAPI** (Python).
-    - Exposes strict JSON endpoints allowing the frontend to fetch regression projections, classification rankings, tabular drilldowns, and SHAP feature importance.
-    - Seamlessly loads robust serialized `.pkl` machine learning models (Random Forest, Ridge, Logit).
+## What the app does
 
----
+Four views, all over the same 12-state sample:
 
-## 💻 Tech Stack
-
-### Frontend Hub
-- **Core Framework**: React 18 & Vite
-- **Styling**: Vanilla CSS (CSS3 Variables & Strict 8-point Grid System)
-- **Data Visualization**: Recharts (SVG gradients) & Plotly.js (Carto-Darkmatter GeoJSON polygons)
-- **Icons**: Lucide-React
-
-### Intelligence Backend
-- **Web Framework**: FastAPI (running on Uvicorn)
-- **Predictive Engines**: Scikit-Learn (Random Forest, Ridge Regression, Logistic Regression)
-- **Data Engineering**: Pandas & NumPy
-- **Model Explainability**: SHAP (SHapley Additive exPlanations)
-- **Serialization**: Joblib (`.pkl` model persistence)
-
----
-
-## 📸 Key Features
-
-* **Live Intel Feed Dashboard**: Displays national statistics, dynamically pulsing statuses, and command-center-like data integrations.
-* **Ensemble Forecasts**: Blends multiple ML models (Linear, Ridge, Random Forest) to project crime rates with extremely high accuracy, accompanied by absolute error calculations.
-* **SHAP Impact Analysis**: Transparent metric attribution. Instantly see whether recent momentum (e.g. `momentum_21_22`) or historical baseline rates are driving a particular state's risk classification.
-* **Geospatial Mapping**: Interactive heatmaps routing structural threat scores directly to regional polygons.
-
----
-
-## 📊 Data Source
-
-All crime statistics powering this dashboard are sourced from the **National Crime Records Bureau (NCRB)**, published under the Indian Government's open data initiative.
-
-| Attribute | Details |
+| View | What it shows |
 |---|---|
-| **Source** | National Crime Records Bureau (NCRB), Ministry of Home Affairs, India |
-| **Dataset** | Crime in India — State & District-Level Reports |
-| **Coverage Years** | 2019 – 2023 |
-| **Coverage** | All 28 States & 8 Union Territories |
-| **Granularity** | State → District → Crime Type → Year |
-| **File** | `backend/data/crime_data.csv` |
-| **Last Updated** | 2022 (NCRB Annual Report cycle) |
+| **Backtest & Analysis** | For a chosen state: the 2023 crime rate (per 100k) estimated by Linear, Ridge, Random Forest and their mean, next to the observed 2023 rate, plus SHAP feature impact for the Random Forest. |
+| **Crime Patterns** | The model's guess for the state's dominant 2023 crime type, the observed one, and the share trend of the five crime types with the highest average share. |
+| **Risk Classification** | A low / medium / high risk class per state (terciles of the 2023 rate), predicted vs observed, with a 1–3 risk score. |
+| **State Map** | Observed 2023 crime rate per 100k on a state map, plus top districts and crime-type counts for the selected state. |
 
-> **Note:** The dataset is included directly in the repository under `backend/data/`. No external download is required to run the application locally. The backend automatically detects the CSV on startup and builds all feature tables in memory.
+## How the evaluation works (and why it is weak evidence)
 
----
+- **Inputs:** features built only from 2019–2022 (rates, average, trend, momentum, volatility, growth; crime-type shares for the pattern task).
+- **Targets:** observed 2023 crime rate, dominant 2023 crime type, and relative 2023 risk class.
+- **Out-of-fold (OOF) predictions:** the 12 states are split once into 4 folds (`KFold`, shuffled, `random_state=42`). Every displayed prediction comes from a model trained on the *other* folds, so it never saw that state. Training-set accuracy or R² is never shown as model quality.
+- **Metrics** are computed on the 12 held-out predictions: MAE and R² in crime-rate-per-100k units for regression; accuracy and macro-F1 for the two classification tasks.
 
+### Results of the current backtest
 
+| Task | Model | OOF result |
+|---|---|---|
+| 2023 rate (per 100k, range 136–181) | Random Forest | MAE 6.7, R² 0.61 |
+| | Ridge | MAE 8.4, R² 0.46 |
+| | Linear | MAE 12.3, R² −0.25 |
+| | Mean of the three | MAE 8.1, R² 0.45 |
+| Dominant 2023 crime type (5 classes) | Random Forest | accuracy 8% |
+| | Logistic | accuracy 50% |
+| Risk class (low / medium / high) | Random Forest | accuracy 92% |
+| | Logistic | accuracy 67% |
 
-Because the architecture has been decoupled, you will need to run the backend and the frontend simultaneously in two separate terminal windows.
+These come from `train_all()` on the bundled CSV (shown by `GET /api/metrics`). They can change if the data, library versions or code change.
 
-### 1. Initialize the Intelligence Backend
-Open your first terminal and navigate to the backend directory:
+### Limitations
+
+- **Only 12 states**, so every metric rests on 12 held-out predictions and can swing a lot.
+- **Dominant-crime classes are imbalanced** (4/3/2/2/1 states per class; one class has a single state). Stratified folds are impossible, and a held-out singleton class can never be predicted. Treat this task as unreliable.
+- **The risk task is easier than it looks:** labels are terciles of the 2023 rate computed over all 12 states, and the features are the earlier-year rates of the same states.
+- **"RF tree spread (10th–90th percentile)"** is the spread of individual trees. It is *not* a calibrated confidence or prediction interval.
+- **The data is not official** (see below). Nothing here supports conclusions about real regions.
+
+## Data
+
+`backend/data/crime_data.csv` follows the structure of National Crime Records Bureau (NCRB) statistics. Its origin is not documented and it has **not been verified against the official NCRB tables**. Treat it as sample data.
+
+| Attribute | Value |
+|---|---|
+| Rows | 30,000 |
+| Coverage | 12 states, 300 districts, 10 crime types |
+| Years in file | 2014–2023 (the pipeline uses 2019–2023) |
+| Granularity | State → District → Crime type → Year |
+
+`backend/india_state.geojson` supplies state outlines for the map (35 features; the 12 dataset states match `properties.NAME_1`). Its origin and licence are also undocumented.
+
+## Tech stack
+
+- **Backend:** Python (verified with 3.11), FastAPI, Uvicorn, pandas, NumPy, scikit-learn (Linear, Ridge, Logistic, Random Forest), SHAP, Joblib, SlowAPI (60 requests/minute per client), pytest.
+- **Frontend:** React 19, Vite 8, Recharts, Plotly (`react-plotly.js`), Lucide React, plain CSS.
+- **Delivery files:** Docker Compose, backend and frontend Dockerfiles (frontend served by Nginx), `render.yaml`, `frontend/vercel.json`. Their presence does not mean the app is deployed anywhere.
+
+## Run it locally
+
+Backend (port **8001**):
+
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements-dev.txt     # runtime + pytest
+
 cd backend
-
-# Install the Python dependencies
-pip install fastapi uvicorn pandas scikit-learn shap
-
-# If you haven't generated the models yet, run the training engine:
-python -c "import models; models.train_all()"
-
-# Boot up the FastAPI server on port 8001
-uvicorn api:app --reload --port 8001
+uvicorn api:app --port 8001
 ```
 
-### 2. Initialize the Obsidian Frontend
-Open your second terminal and navigate to the frontend directory:
+On startup the API checks all 17 saved model files in `backend/models/`. If any is missing or unreadable it trains the full set once (a few seconds) and becomes ready without a restart. `GET /api/status` reports the real state; if startup fails, model endpoints return `503`. Paths are resolved from the code's location, so the command also works as `uvicorn --app-dir backend api:app --port 8001` from the repository root.
+
+Frontend (port **5174**), in a second terminal:
+
 ```bash
 cd frontend
-
-# Install the Node dependencies (React, Recharts, Plotly, Lucide)
-npm install
-
-# Launch the Vite development server
+npm ci
 npm run dev
 ```
 
-### 3. Access the Terminal
-Once both servers are running, the application should automatically open in your browser, or you can manually navigate to:
-**[http://localhost:5174](http://localhost:5174)**
+Open <http://localhost:5174>. Select a state in the sidebar.
 
----
+### Configuration
 
-## 🎨 Design Philosophy
-The frontend enforces a non-negotiable **"Intentional Premium UI"** mandate:
-* **Zero generic frameworks**: Engineered entirely with a custom Vanilla CSS variable architecture (`index.css`) rather than relying on bloated Tailwind or Bootstrap scaffolding.
-* **Glassmorphism**: Leverages subtle translucent backgrounds (`rgba(255,255,255,0.02)`) and background blurring to create immersive depth.
-* **High-Clarity Typography**: Strictly uses the *Inter* typeface, leaning entirely into weights and tracking to establish clear visual hierarchies. 
+| Variable | Used by | Meaning | Default |
+|---|---|---|---|
+| `ALLOWED_ORIGIN` | backend | The single browser origin allowed by CORS | `http://localhost:5174` |
+| `VITE_API_URL` | frontend (build time) | Backend base URL, without `/api` | `http://localhost:8001` |
 
-## 🔒 License
-Proprietary Analysis Engine. All rights reserved.
+### Tests, lint, build
+
+```bash
+python -m pytest backend/tests -q     # backend (from the repo root, venv active)
+
+cd frontend
+npm run lint
+npm run build
+```
+
+There are no frontend unit tests.
+
+### Docker Compose
+
+```bash
+docker compose build
+docker compose up -d      # backend on :8001, frontend (Nginx) on :5174
+docker compose ps
+docker compose down
+```
+
+The backend image trains its models at build time and the build fails if training fails. The frontend image uses Node 22 and `npm ci`.
+
+## API
+
+All endpoints are `GET` under `/api`: `status`, `states`, `forecast?state=`, `crime-pattern?state=`, `risk-analysis`, `state-drilldown?state=`, `geojson`, `metrics`.
+Unknown states return `404`, a missing `state` returns `422`, and `503` means data or models failed to initialize. `forecast`, `crime-pattern`, `risk-analysis` and `metrics` return the stored out-of-fold results (`"evaluation": "out_of_fold"`); nothing is refit per request.
+
+## Possible future work (not implemented)
+
+Verify or replace the dataset with documented official figures, add more states/years, true time-based validation, and calibrated uncertainty.
+
+## License
+
+No license file is provided in this repository, so no license is granted.
