@@ -2,6 +2,8 @@
 
 A React and FastAPI dashboard that performs a small **historical 2023 backtest** over an **unverified NCRB-style sample dataset**. It uses 2019–2022 state-level features to compare regression and classification models, visualizes observed 2023 crime rates and crime patterns, and shows model explanations and limitations.
 
+**Hosted demo:** [crime-risk-intellience-ashy.vercel.app](https://crime-risk-intellience-ashy.vercel.app)
+
 > **This is an educational full-stack ML demonstration.** It is not a live crime feed, not an official NCRB product, not a public-safety decision system, and not a production forecasting service.
 
 ## What the app does
