@@ -1,52 +1,33 @@
-import React, { useState, useEffect } from 'react';
-import { Skeleton, Card, ErrorBanner } from './ui';
+import React from 'react';
+import { useApi } from '../hooks/useApi';
+import { Skeleton, ErrorBanner } from './ui';
 
 export default function DashboardRisk({ apiBase }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    async function fetchRisk() {
-      setLoading(true);
-      try {
-        const res = await fetch(`${apiBase}/risk-analysis`);
-        if (!res.ok) throw new Error();
-        const json = await res.json();
-        setData(json);
-        setError(false);
-      } catch (err) {
-        console.error(err);
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchRisk();
-  }, [apiBase]);
+  const { data, loading, error } = useApi(`${apiBase}/risk-analysis`);
 
   if (loading) return <Skeleton style={{ height: '400px', marginTop: '16px' }} />;
-  if (!data) return <div className="text-secondary p-4">No data</div>;
+  if (error) return <ErrorBanner message={error} />;
+  if (!data) return <div className="text-secondary p-4">No risk data available.</div>;
 
   const rankings = data.rankings || [];
 
   return (
     <div className="mt-4 flex-col gap-4" style={{ animation: 'fadeIn var(--transition-smooth)' }}>
-      {error && <ErrorBanner />}
       <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
         <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-          <h3 className="text-lg font-bold text-main">Risk Classification and Ranking</h3>
-          <p className="text-sm text-secondary mt-1">Aggregated scoring model mapping high-risk zones across India.</p>
+          <h3 className="text-lg font-bold text-main">Risk Classification Backtest and Ranking</h3>
+          <p className="text-sm text-secondary mt-1">Relative risk class (terciles of the 2023 rate) predicted from 2019–2022 features by a model that did not train on that state. Out-of-fold backtest on unverified sample data, 12 states.</p>
         </div>
         <div style={{ overflowX: 'auto', padding: 'var(--space-2)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 'var(--font-size-sm)' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-strong)', color: 'var(--text-tertiary)' }}>
                 <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Region / State</th>
-                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Risk Class</th>
-                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Threat Score</th>
-                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Base Rate '23</th>
-                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Momentum</th>
+                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Predicted Class</th>
+                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Observed Class</th>
+                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Risk Score (1–3)</th>
+                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Observed 2023 Rate</th>
+                <th style={{ padding: 'var(--space-3) var(--space-4)', fontWeight: 'var(--font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Change 2021→22</th>
               </tr>
             </thead>
             <tbody>
@@ -74,6 +55,7 @@ export default function DashboardRisk({ apiBase }) {
                       {row.Predicted_Risk_Class}
                     </span>
                   </td>
+                  <td style={{ padding: 'var(--space-3) var(--space-4)', color: 'var(--text-secondary)', textTransform: 'uppercase', fontSize: '11px' }}>{row.Actual_Risk_Class}</td>
                   <td style={{ padding: 'var(--space-3) var(--space-4)', color: 'var(--text-secondary)' }}><strong className="text-main">{row.Risk_Score?.toFixed(2)}</strong></td>
                   <td style={{ padding: 'var(--space-3) var(--space-4)', color: 'var(--text-secondary)' }}>{row.rate_2023?.toFixed(2)}</td>
                   <td style={{ padding: 'var(--space-3) var(--space-4)', color: row.momentum_21_22 > 0 ? 'var(--error)' : 'var(--success)' }}>

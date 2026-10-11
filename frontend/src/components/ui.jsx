@@ -123,7 +123,7 @@ export function Select({ options, value, onChange, placeholder = 'Select Item...
   );
 }
 
-export function ErrorBanner({ message = "Backend offline — showing cached data" }) {
+export function ErrorBanner({ message = "Could not load data from the API." }) {
   return (
     <div style={{ backgroundColor: 'rgba(248, 113, 113, 0.1)', color: 'var(--error)', padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid var(--error)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--space-4)', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)' }}>
       <AlertTriangle size={18} />

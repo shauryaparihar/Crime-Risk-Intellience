@@ -9,8 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source
 COPY . .
 
-# Pre-train models if they don't exist
-RUN python -c "import models; models.train_all()" || echo "Training bypassed or failed; continuing"
+# Train at build time. A training failure must fail the build, never be masked.
+RUN python -c "import models; models.train_all()"
 
 EXPOSE 8001
 

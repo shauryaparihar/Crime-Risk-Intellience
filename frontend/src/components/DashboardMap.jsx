@@ -1,50 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useApi } from '../hooks/useApi';
 import { Skeleton, Card, ErrorBanner } from './ui';
-import Plot from 'react-plotly.js';
+import PlotModule from 'react-plotly.js';
+
+// react-plotly.js is CommonJS; depending on the bundler the component arrives as `.default`.
+const Plot = PlotModule.default ?? PlotModule;
 
 export default function DashboardMap({ state, apiBase }) {
-  const [drilldownData, setDrilldownData] = useState(null);
-  const [geoData, setGeoData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const geo = useApi(`${apiBase}/geojson`);
+  const drill = useApi(state ? `${apiBase}/state-drilldown?state=${encodeURIComponent(state)}` : null);
+  const geoData = geo.data;
+  const drilldownData = drill.data;
 
-  useEffect(() => {
-    async function fetchGeo() {
-      try {
-        const res = await fetch(`${apiBase}/geojson`);
-        if (res.ok) {
-          const json = await res.json();
-          setGeoData(json);
-        }
-      } catch (err) {
-        console.error("GeoJSON error:", err);
-      }
-    }
-    fetchGeo();
-  }, [apiBase]);
-
-  useEffect(() => {
-    if (!state) return;
-    async function fetchDrilldown() {
-      setLoading(true);
-      try {
-        const res = await fetch(`${apiBase}/state-drilldown?state=${encodeURIComponent(state)}`);
-        if (!res.ok) throw new Error();
-        const json = await res.json();
-        setDrilldownData(json);
-        setError(false);
-      } catch (err) {
-        console.error("Drilldown error:", err);
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchDrilldown();
-  }, [state, apiBase]);
-
-  if (loading) return <Skeleton style={{ height: '400px', marginTop: '16px' }} />;
-  if (!drilldownData) return <div className="text-secondary p-4">No drilldown data for state.</div>;
+  if (geo.loading || drill.loading) return <Skeleton style={{ height: '400px', marginTop: '16px' }} />;
 
   let mapFigure = null;
   if (geoData?.geojson && geoData?.rates) {
@@ -60,13 +28,13 @@ export default function DashboardMap({ state, apiBase }) {
           z: z,
           featureidkey: "properties.NAME_1",
           colorscale: [
-            [0, '#06B6D4'],    // Cyan for low risk
-            [0.5, '#3B82F6'],  // Blue for medium
-            [1, '#F87171']     // Red for high
+            [0, '#06B6D4'],    // lower rate
+            [0.5, '#3B82F6'],  // middle
+            [1, '#F87171']     // higher rate
           ],
           marker: { line: { color: "rgba(255,255,255,0.1)", width: 1 } },
           colorbar: { 
-            title: { text: "Base Rate '23", font: { color: '#94A3B8' } },
+            title: { text: "2023 rate per 100k", font: { color: '#94A3B8' } },
             tickfont: { color: '#94A3B8' }
           }
         }]}
@@ -89,21 +57,23 @@ export default function DashboardMap({ state, apiBase }) {
 
   return (
     <div className="mt-4 flex-col gap-4" style={{ animation: 'fadeIn var(--transition-smooth)' }}>
-      {error && <ErrorBanner />}
+      {geo.error && <ErrorBanner message={`Map data: ${geo.error}`} />}
+      {drill.error && <ErrorBanner message={`State details: ${drill.error}`} />}
+      {!state && !geo.error && <div className="text-secondary p-4">Select a state in the sidebar to see its district and crime-type breakdown.</div>}
       {mapFigure && (
         <Card className="mb-6 border-subtle" style={{ padding: '0', overflow: 'hidden' }}>
           <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
-            <h3 className="text-lg font-bold">Geospatial Intelligence Heatmap</h3>
-            <p className="text-sm text-secondary mt-1">Live geographic distribution of state-level risk projections.</p>
+            <h3 className="text-lg font-bold">State Crime-Rate Map (Observed 2023)</h3>
+            <p className="text-sm text-secondary mt-1">Observed 2023 crime rate per 100k by state, from the unverified NCRB-style sample dataset. Not a projection.</p>
           </div>
           {mapFigure}
         </Card>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
+      {drilldownData && <div className="grid grid-cols-2 gap-4">
         <div className="card" style={{ padding: '0' }}>
           <div style={{ padding: 'var(--space-4)', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
-            <h3 className="text-lg font-bold">Top Districts by Gross Volume</h3>
+            <h3 className="text-lg font-bold">Top Districts by Reported Cases (2023)</h3>
           </div>
           <div className="custom-scroll" style={{ maxHeight: '250px', overflowY: 'auto' }}>
             <ul style={{ listStyle: 'none', padding: '0 var(--space-4)' }}>
@@ -119,7 +89,7 @@ export default function DashboardMap({ state, apiBase }) {
         
         <div className="card" style={{ padding: '0' }}>
           <div style={{ padding: 'var(--space-4)', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
-            <h3 className="text-lg font-bold">Crime Type Breakdown</h3>
+            <h3 className="text-lg font-bold">Reported Cases by Crime Type (2023)</h3>
           </div>
           <div className="custom-scroll" style={{ maxHeight: '250px', overflowY: 'auto' }}>
             <ul style={{ listStyle: 'none', padding: '0 var(--space-4)' }}>
@@ -132,7 +102,7 @@ export default function DashboardMap({ state, apiBase }) {
             </ul>
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

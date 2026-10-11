@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useApi } from '../hooks/useApi';
 import { Skeleton, Card, ErrorBanner } from './ui';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Activity, Target, Zap } from 'lucide-react';
@@ -17,29 +18,10 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function DashboardForecast({ state, apiBase }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const url = state ? `${apiBase}/forecast?state=${encodeURIComponent(state)}` : null;
+  const { data, loading, error } = useApi(url);
 
-  useEffect(() => {
-    if (!state) return;
-    async function fetchForecast() {
-      setLoading(true);
-      try {
-        const res = await fetch(`${apiBase}/forecast?state=${encodeURIComponent(state)}`);
-        if (!res.ok) throw new Error();
-        const json = await res.json();
-        setData(json);
-        setError(false);
-      } catch (err) {
-        console.error(err);
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchForecast();
-  }, [state, apiBase]);
+  if (!state) return <div className="p-4 text-center text-tertiary">Select a state in the sidebar to see its backtest result.</div>;
 
   if (loading) {
     return (
@@ -50,35 +32,39 @@ export default function DashboardForecast({ state, apiBase }) {
     );
   }
 
-  if (!data) return <div className="p-4 text-center text-tertiary">No intelligence data streaming.</div>;
+  if (error) return <ErrorBanner message={error} />;
+  if (!data) return <div className="p-4 text-center text-tertiary">No backtest data available for this state.</div>;
 
   const comparisonData = [
     { name: 'Linear', value: data.predictions.linear },
     { name: 'Ridge', value: data.predictions.ridge },
     { name: 'Random F', value: data.predictions.random_forest },
     { name: 'Ensemble', value: data.predictions.ensemble },
-    { name: 'Actual', value: data.predictions.actual },
+    { name: 'Observed', value: data.predictions.actual },
   ];
 
   const shapData = data.shap.slice(0, 7).reverse();
 
   return (
     <div className="mt-4 flex-col gap-4" style={{ animation: 'fadeIn var(--transition-smooth)' }}>
-      {error && <ErrorBanner />}
-      
+      <p className="text-sm text-secondary mb-4">
+        Historical backtest of the 2023 crime rate (per 100k) from 2019–2022 features. Each value comes from models
+        that did <strong>not</strong> train on {state} (validation fold {data.fold + 1} of 4). Unverified NCRB-style sample data; 12 states only.
+      </p>
+
       {/* Metric Cards */}
       <div className="grid grid-cols-3 mb-8" style={{ gap: '24px' }}>
         <Card className="card-metric border-subtle">
           <div className="flex items-center gap-2 mb-2 text-secondary">
             <Activity size={18} className="text-warning" />
-            <span className="text-sm font-semibold uppercase tracking-wide">Ensemble Forecast</span>
+            <span className="text-sm font-semibold uppercase tracking-wide">Held-out Ensemble Estimate</span>
           </div>
           <span className="text-4xl font-bold text-main">{data.predictions.ensemble}</span>
         </Card>
         <Card className="card-metric border-subtle">
           <div className="flex items-center gap-2 mb-2 text-secondary">
             <Target size={18} className="text-accent" />
-            <span className="text-sm font-semibold uppercase tracking-wide">Actual Rate</span>
+            <span className="text-sm font-semibold uppercase tracking-wide">Observed 2023 Rate</span>
           </div>
           <span className="text-4xl font-bold text-main">{data.predictions.actual}</span>
         </Card>
@@ -96,7 +82,7 @@ export default function DashboardForecast({ state, apiBase }) {
         {/* Model Comparison */}
         <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
           <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)' }}>
-            <h3 className="text-lg font-bold">Model Comparison</h3>
+            <h3 className="text-lg font-bold">Held-out Estimates vs Observed (rate per 100k)</h3>
           </div>
           <div style={{ height: '300px', padding: 'var(--space-3)' }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -113,7 +99,7 @@ export default function DashboardForecast({ state, apiBase }) {
                 <Tooltip content={<CustomTooltip />} cursor={{fill: 'var(--bg-surface-hover)'}} />
                 <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                   {comparisonData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.name === 'Actual' ? 'var(--text-main)' : 'url(#colorValue)'} />
+                    <Cell key={`cell-${index}`} fill={entry.name === 'Observed' ? 'var(--text-main)' : 'url(#colorValue)'} />
                   ))}
                 </Bar>
               </BarChart>
@@ -124,7 +110,7 @@ export default function DashboardForecast({ state, apiBase }) {
         {/* SHAP Chart */}
         <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
           <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)' }}>
-            <h3 className="text-lg font-bold">SHAP Feature Impact</h3>
+            <h3 className="text-lg font-bold">SHAP Feature Impact (Random Forest)</h3>
           </div>
           <div style={{ height: '300px', padding: 'var(--space-3) var(--space-3) var(--space-3) 0' }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -145,6 +131,11 @@ export default function DashboardForecast({ state, apiBase }) {
           </div>
         </div>
       </div>
+
+      <p className="text-xs text-tertiary mt-4">
+        {data.uncertainty.label}: {data.uncertainty.low}–{data.uncertainty.high} (not a calibrated confidence or prediction interval).
+        Random Forest held-out error across all 12 states: {data.metrics?.rf?.oof_mae_rate_per_100k?.toFixed(2)} per 100k (out-of-fold MAE).
+      </p>
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useApi } from './hooks/useApi';
 import './index.css';
-import { Card, Select, Tabs, Skeleton } from './components/ui';
-import { 
-  BarChart3, TrendingUp, AlertTriangle, Map as MapIcon, 
-  Shield, Activity, Siren, Radio, Crosshair, 
-  Search, User, Clock, ChevronRight, Lock, Server, Database
+import { Card, Select, Tabs, Skeleton, ErrorBanner } from './components/ui';
+import {
+  BarChart3, TrendingUp, AlertTriangle, Map as MapIcon,
+  Shield, Siren, Info,
+  Clock, ChevronRight, Server, Database
 } from 'lucide-react';
 import DashboardForecast from './components/DashboardForecast';
 import DashboardCrimePattern from './components/DashboardCrimePattern';
@@ -15,14 +16,24 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL.replace(/\/+$/, '')}/api`
   : 'http://localhost:8001/api';
 
+const fmt = (v, digits = 1, scale = 1) =>
+  typeof v === 'number' && Number.isFinite(v) ? (v * scale).toFixed(digits) : '—';
+
 function App() {
-  const [states, setStates] = useState([]);
   const [currentState, setCurrentState] = useState('');
-  const [status, setStatus] = useState({ models_ready: false, data_loaded: false });
-  const [globalRisk, setGlobalRisk] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [metrics, setMetrics] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  const statesRes = useApi(`${API_BASE}/states`);
+  const riskRes = useApi(`${API_BASE}/risk-analysis`);
+  const metricsRes = useApi(`${API_BASE}/metrics`);
+
+  const states = statesRes.data?.states || [];
+  const metrics = metricsRes.data;
+  const topRisk = (riskRes.data?.rankings || [])
+    .filter(r => r.Predicted_Risk_Class === 'high')
+    .slice(0, 3);
+  const loading = statesRes.loading;
+  const apiError = statesRes.error || riskRes.error || metricsRes.error;
 
   // Live clock tick
   useEffect(() => {
@@ -30,41 +41,9 @@ function App() {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    async function init() {
-      try {
-        const [statusRes, statesRes, riskRes, metricsRes] = await Promise.all([
-          fetch(`${API_BASE}/status`).catch(() => ({ json: () => ({}) })),
-          fetch(`${API_BASE}/states`).catch(() => ({ json: () => ({ states: [] }) })),
-          fetch(`${API_BASE}/risk-analysis`).catch(() => ({ json: () => ({ rankings: [] }) })),
-          fetch(`${API_BASE}/metrics`).catch(() => ({ json: () => (null) }))
-        ]);
-        const statusData = await statusRes.json();
-        const statesData = await statesRes.json();
-        const riskData = await riskRes.json();
-        const metricsData = await metricsRes.json();
-        
-        setStatus(statusData);
-        setMetrics(metricsData);
-        setStates(statesData.states || []);
-        if (statesData.states?.length > 0) {
-          // Do not auto-select, let user choose manually
-        }
-        if (riskData.rankings) {
-          setGlobalRisk(riskData.rankings.filter(r => r.Predicted_Risk_Class === 'high').slice(0, 3));
-        }
-      } catch (e) {
-        console.error("Connection error", e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    init();
-  }, []);
-
   const tabs = [
     {
-      id: 'forecast', label: 'Forecast & Analysis', icon: BarChart3,
+      id: 'forecast', label: 'Backtest & Analysis', icon: BarChart3,
       content: <DashboardForecast state={currentState} apiBase={API_BASE} />
     },
     {
@@ -105,76 +84,81 @@ function App() {
           />
         </div>
 
-        {/* Critical Risk Zones */}
-        {/* Critical Risk Zones */}
+        {/* Highest backtest risk scores */}
         <div>
           <label className="text-xs font-semibold text-error uppercase tracking-wider mb-3 flex items-center gap-2">
-            <Siren size={14} /> Critical Risk Zones
+            <Siren size={14} /> Highest Backtest Risk Scores
           </label>
           <div className="flex flex-col gap-3">
-            {globalRisk.length > 0 ? globalRisk.map((r, i) => {
-              // Deterministic fake trend based on index just for visual flair
-              const trend = (4.2 + (i * 1.7)).toFixed(1);
-              return (
-                <div key={r.state} className="flex justify-between items-center" style={{ backgroundColor: 'rgba(255,255,255,0.02)', padding: '10px 12px', borderLeft: '3px solid var(--error)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}>
-                  <span className="text-sm text-main font-medium">{r.state}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-error font-bold flex items-center gap-1">
-                      <TrendingUp size={12} strokeWidth={3} /> {trend}%
-                    </span>
-                  </div>
-                </div>
-              );
-            }) : (
+            {riskRes.loading ? (
               <Skeleton style={{ height: '44px', marginBottom: '8px' }} />
+            ) : topRisk.length > 0 ? topRisk.map(r => (
+              <div key={r.state} className="flex justify-between items-center" style={{ backgroundColor: 'rgba(255,255,255,0.02)', padding: '10px 12px', borderLeft: '3px solid var(--error)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}>
+                <span className="text-sm text-main font-medium">{r.state}</span>
+                <span className="text-xs text-error font-bold" title="Out-of-fold risk score, 1 (low) to 3 (high)">
+                  {fmt(r.Risk_Score, 2)} / 3
+                </span>
+              </div>
+            )) : (
+              <div className="text-xs text-tertiary">No ranking available.</div>
             )}
           </div>
         </div>
 
-        {/* Live Intel Feed */}
+        {/* About this data */}
         <div className="card" style={{ padding: '16px', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Radio size={16} className="text-accent-cyan" />
-              <span className="text-sm font-bold text-main tracking-wide">Live Intel Feed</span>
-            </div>
-            <div style={{ width: '8px', height: '8px', backgroundColor: 'var(--success)', borderRadius: '50%', boxShadow: '0 0 10px var(--success)', animation: 'pulse 2s infinite' }}></div>
+          <div className="flex items-center gap-2 mb-3">
+            <Info size={16} className="text-accent-cyan" />
+            <span className="text-sm font-bold text-main tracking-wide">About This Data</span>
           </div>
-          <p className="text-xs text-secondary leading-relaxed">Processing active FIR logs from regional central bureaus.</p>
-          <div className="text-[10px] text-tertiary mt-3 font-mono tracking-wider uppercase">Sync: {currentTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST</div>
+          <p className="text-xs text-secondary leading-relaxed">
+            Historical 2023 backtest on an unverified NCRB-style sample of 12 states. Not live, not official, not for decisions.
+          </p>
         </div>
 
-        {/* Model Health / Metrics */}
+        {/* Backtest metrics */}
         <div>
           <label className="text-xs font-semibold text-tertiary uppercase tracking-wider mb-2 flex items-center gap-2">
-            <Server size={14} /> Model Health
+            <Server size={14} /> Backtest Metrics (Out-of-fold)
           </label>
           <div className="card" style={{ padding: '12px', backgroundColor: 'rgba(255,255,255,0.02)' }}>
-            {metrics ? (
+            {metricsRes.loading ? (
+              <Skeleton style={{ height: '80px' }} />
+            ) : metrics ? (
               <div className="text-xs text-secondary flex flex-col gap-2">
                 <div className="flex justify-between items-center pb-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                   <span>Trained On</span>
                   <span className="font-mono text-tertiary">{metrics.training_date}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span>RF R² (Train)</span>
-                  <span className="font-bold text-main">{(metrics.regression?.rf?.train_r2 * 100)?.toFixed(1)}%</span>
+                  <span>Sample</span>
+                  <span className="font-bold text-main">{metrics.n_states} states, {metrics.n_folds} folds</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span>RF MAE (5-CV)</span>
-                  <span className="font-bold text-main">{metrics.regression?.rf?.cv_mae_mean?.toFixed(2)}</span>
+                  <span>RF rate MAE</span>
+                  <span className="font-bold text-main">{fmt(metrics.regression?.rf?.oof_mae_rate_per_100k, 2)} /100k</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span>Logit Acc</span>
-                  <span className="font-bold text-main">{(metrics.classification?.logit_acc_train * 100)?.toFixed(1)}%</span>
+                  <span>RF rate R²</span>
+                  <span className="font-bold text-main">{fmt(metrics.regression?.rf?.oof_r2, 2)}</span>
                 </div>
+                <div className="flex justify-between items-center">
+                  <span>RF risk-class acc.</span>
+                  <span className="font-bold text-main">{fmt(metrics.risk?.rf?.oof_accuracy, 0, 100)}%</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>RF dominant-crime acc.</span>
+                  <span className="font-bold text-main">{fmt(metrics.classification?.rf?.oof_accuracy, 0, 100)}%</span>
+                </div>
+                <p className="text-[10px] text-tertiary leading-relaxed pt-1">
+                  Only {metrics.n_states} states: treat these as weak evidence.
+                </p>
               </div>
             ) : (
-                <Skeleton style={{ height: '80px' }} />
+              <div className="text-xs text-tertiary">Metrics unavailable.</div>
             )}
           </div>
         </div>
-
 
       </aside>
 
@@ -191,14 +175,14 @@ function App() {
           <div className="flex items-center gap-2 text-sm text-secondary font-medium tracking-wide">
             <span>Terminal</span>
             <ChevronRight size={14} className="text-tertiary" />
-            <span>India Context</span>
+            <span>Sample Data (12 States)</span>
             <ChevronRight size={14} className="text-tertiary" />
-            <span className="text-accent-primary font-bold">{currentState || 'Loading...'}</span>
+            <span className="text-accent-primary font-bold">{currentState || 'No state selected'}</span>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-[11px] font-bold text-accent-cyan px-2 py-1 bg-[rgba(6,182,212,0.1)] border border-[rgba(6,182,212,0.2)] rounded" title="Data sourced from National Crime Records Bureau">
-              <Database size={12} /> Data: NCRB 2022
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-accent-cyan px-2 py-1 bg-[rgba(6,182,212,0.1)] border border-[rgba(6,182,212,0.2)] rounded" title="NCRB-style crime data, not verified against official tables">
+              <Database size={12} /> Data: NCRB-style sample
             </div>
             {/* Live Clock */}
             <div className="flex items-center gap-2 text-sm text-secondary font-mono bg-[rgba(255,255,255,0.02)] px-3 py-1.5 rounded-md border border-[rgba(255,255,255,0.05)]">
@@ -207,6 +191,8 @@ function App() {
             </div>
           </div>
         </header>
+
+        {apiError && <ErrorBanner message={apiError} />}
 
         <div className="flex-1">
           {loading ? (
@@ -223,13 +209,6 @@ function App() {
         </div>
       </main>
 
-      <style>{`
-        @keyframes pulse {
-          0% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.1); }
-          100% { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
     </div>
   );
 }
