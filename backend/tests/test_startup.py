@@ -98,3 +98,17 @@ def test_bad_csv_schema_fails_safely(tmp_path):
         assert status["models_ready"] is False
         assert status["error"] == "Initialization failed (ValueError)"
         assert c.get("/api/states").status_code == 503
+
+
+@pytest.mark.parametrize("damage", ["delete", "corrupt"])
+def test_damaged_backtest_artifact_is_rebuilt(trained_dir, tmp_path, damage):
+    d = tmp_path / "bt"
+    shutil.copytree(trained_dir, d)
+    if damage == "delete":
+        (d / "backtest_results.pkl").unlink()
+    else:
+        (d / "backtest_results.pkl").write_bytes(b"garbage")
+    with TestClient(create_app(models_dir=d)) as c:
+        assert c.get("/api/status").json()["models_ready"] is True
+        assert c.get("/api/forecast?state=Bihar").json()["evaluation"] == "out_of_fold"
+    assert models.missing_artifacts(d) == []

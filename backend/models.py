@@ -3,14 +3,14 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
-from sklearn.model_selection import KFold, cross_val_score
+import shap
+from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, Ridge, LogisticRegression
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score, f1_score
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 # All paths hang off this file's location, never the shell's current directory.
 BASE_DIR = Path(__file__).resolve().parent
@@ -24,7 +24,7 @@ ARTIFACT_NAMES = [
     "reg_lr", "reg_ridge", "reg_rf", "reg_feat", "reg_metrics",
     "type_rf", "type_logit", "type_enc", "type_feat", "type_metrics",
     "risk_rf", "risk_logit", "risk_enc", "risk_feat", "risk_metrics",
-    "derived_data",
+    "derived_data", "backtest_results",
 ]
 
 REQUIRED_COLUMNS = [
@@ -180,168 +180,238 @@ def build_risk_dataset(state_features):
     return X, y
 
 
+BACKTEST_SEED = 42
+BACKTEST_FOLDS = 4
+
+LIMITATIONS = [
+    "Only 12 states: every metric is based on 12 held-out predictions.",
+    "Dominant-crime classes are imbalanced and one class has a single state, "
+    "so stratified folds are impossible and that class cannot be learned when held out.",
+    "Dataset is an unverified NCRB-style sample, not official data.",
+    "RF tree spread is the 10th-90th percentile of individual trees, not a calibrated prediction interval.",
+    "Risk classes are terciles of the 2023 rate across all 12 states (labels use every state's 2023 value).",
+]
+
+
+def _numeric_pipeline(model, scale=False):
+    steps = [("imputer", SimpleImputer(strategy="median"))]
+    if scale:
+        steps.append(("scaler", StandardScaler()))
+    steps.append(("model", model))
+    return Pipeline(steps)
+
+
 def regression_models():
     return {
-        "lr": Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", LinearRegression())]),
-        "ridge": Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", Ridge(alpha=1.0))]),
-        "rf": Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", RandomForestRegressor(
+        "lr": _numeric_pipeline(LinearRegression()),
+        "ridge": _numeric_pipeline(Ridge(alpha=1.0), scale=True),
+        "rf": _numeric_pipeline(RandomForestRegressor(
             n_estimators=400,
             max_depth=6,
             min_samples_leaf=1,
             random_state=42
-        ))]),
+        )),
     }
 
 
 def classification_models():
     return {
-        "logit": Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", LogisticRegression(
-            max_iter=1000,
-            random_state=42
-        ))]),
-        "rf": Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", RandomForestClassifier(
+        "logit": _numeric_pipeline(LogisticRegression(max_iter=1000, random_state=42), scale=True),
+        "rf": _numeric_pipeline(RandomForestClassifier(
             n_estimators=300,
             max_depth=6,
             min_samples_leaf=1,
             random_state=42
-        ))]),
+        )),
     }
 
 
-def safe_cv_regression(model, X, y):
-    n = len(X)
-    if n < 4:
-        return {"cv_mae_mean": None, "cv_mae_std": None, "cv_r2_mean": None, "cv_r2_std": None}
-
-    folds = min(5, n)
-    cv = KFold(n_splits=folds, shuffle=True, random_state=42)
-    mae_scores = -cross_val_score(clone(model), X, y, cv=cv, scoring="neg_mean_absolute_error")
-    r2_scores = cross_val_score(clone(model), X, y, cv=cv, scoring="r2")
-    return {
-        "cv_mae_mean": float(mae_scores.mean()),
-        "cv_mae_std": float(mae_scores.std()),
-        "cv_r2_mean": float(r2_scores.mean()),
-        "cv_r2_std": float(r2_scores.std()),
-    }
+def align_proba(fold_classes, proba, n_classes):
+    """Place a fold model's predict_proba columns into the full global class list.
+    A fold can lack a class entirely (e.g. the singleton one); that column is 0."""
+    out = np.zeros((proba.shape[0], n_classes))
+    for col, cls in enumerate(fold_classes):
+        out[:, int(cls)] = proba[:, col]
+    return out
 
 
-def train_regression(X, y, models_dir=MODELS_DIR):
-    models = regression_models()
-    y_log = np.log1p(y)
+def make_folds(states, n_splits=BACKTEST_FOLDS, seed=BACKTEST_SEED):
+    """Deterministic state-level folds: {state: fold_id}, plus per-fold train/valid states."""
+    states = list(states)
+    if len(states) < n_splits:
+        raise ValueError(f"Need at least {n_splits} states for {n_splits}-fold backtest, got {len(states)}")
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    fold_of, train_states, valid_states = {}, {}, {}
+    for fold, (tr, va) in enumerate(kf.split(states)):
+        train_states[fold] = [states[i] for i in tr]
+        valid_states[fold] = [states[i] for i in va]
+        for i in va:
+            fold_of[states[i]] = fold
+    return fold_of, train_states, valid_states
 
+
+def _regression_backtest(X, y, fold_of, train_states, valid_states):
+    feats = list(X.columns)
+    per_state = {}
+    for fold in sorted(train_states):
+        tr, va = train_states[fold], valid_states[fold]
+        y_log = np.log1p(y.loc[tr])
+        fitted = {}
+        for name, model in regression_models().items():
+            model.fit(X.loc[tr], y_log)
+            fitted[name] = model
+        rf = fitted["rf"]
+        rf_core = rf.named_steps["model"]
+        X_va_imp = pd.DataFrame(rf.named_steps["imputer"].transform(X.loc[va]), index=va, columns=feats)
+        shap_vals = shap.TreeExplainer(rf_core).shap_values(X_va_imp.to_numpy())
+        for k, state in enumerate(va):
+            preds = {n: float(np.expm1(m.predict(X.loc[[state]]))[0]) for n, m in fitted.items()}
+            preds["ensemble"] = float(np.mean([preds["lr"], preds["ridge"], preds["rf"]]))
+            tree_preds = np.array([np.expm1(t.predict(X_va_imp.loc[[state]].to_numpy()))[0] for t in rf_core.estimators_])
+            observed = float(y.loc[state])
+            per_state[state] = {
+                "fold": fold,
+                "observed": observed,
+                **preds,
+                "abs_error": {n: abs(v - observed) for n, v in preds.items()},
+                "rf_tree_spread": {
+                    "p10": float(np.percentile(tree_preds, 10)),
+                    "p90": float(np.percentile(tree_preds, 90)),
+                    "std": float(np.std(tree_preds)),
+                },
+                "shap": [{"feature": f, "value": float(v)} for f, v in zip(feats, shap_vals[k])],
+                "feature_importance": [
+                    {"feature": f, "importance": float(v)} for f, v in zip(feats, rf_core.feature_importances_)
+                ],
+            }
+    states = sorted(per_state)
+    obs = np.array([per_state[s]["observed"] for s in states])
     metrics = {}
-    fitted = {}
-
-    for name, model in models.items():
-        cvm = safe_cv_regression(model, X, y_log)
-        model.fit(X, y_log)
-        pred = np.expm1(model.predict(X))
+    for name in ["lr", "ridge", "rf", "ensemble"]:
+        pred = np.array([per_state[s][name] for s in states])
         metrics[name] = {
-            **cvm,
-            "train_mae": float(mean_absolute_error(y, pred)),
-            "train_r2": float(r2_score(y, pred)),
+            "oof_mae_rate_per_100k": float(mean_absolute_error(obs, pred)),
+            "oof_r2": float(r2_score(obs, pred)),
         }
-        fitted[name] = model
-
-    joblib.dump(fitted["lr"], Path(models_dir) / "reg_lr.pkl")
-    joblib.dump(fitted["ridge"], Path(models_dir) / "reg_ridge.pkl")
-    joblib.dump(fitted["rf"], Path(models_dir) / "reg_rf.pkl")
-    joblib.dump(list(X.columns), Path(models_dir) / "reg_feat.pkl")
-    joblib.dump(metrics, Path(models_dir) / "reg_metrics.pkl")
-
-    return metrics
+    return per_state, metrics
 
 
-def train_crime_type(X, y, models_dir=MODELS_DIR):
+def _classification_backtest(X, y, fold_of, train_states, valid_states):
     le = LabelEncoder()
-    y_enc = le.fit_transform(y)
+    y_enc = pd.Series(le.fit_transform(y), index=y.index)
+    n_classes = len(le.classes_)
+    labels = list(range(n_classes))
+    per_state = {}
+    for fold in sorted(train_states):
+        tr, va = train_states[fold], valid_states[fold]
+        for name, model in classification_models().items():
+            model.fit(X.loc[tr], y_enc.loc[tr])
+            proba = align_proba(model.classes_, model.predict_proba(X.loc[va]), n_classes)
+            for k, state in enumerate(va):
+                rec = per_state.setdefault(state, {
+                    "fold": fold,
+                    "actual": str(y.loc[state]),
+                })
+                rec[name] = {
+                    "pred": str(le.classes_[int(np.argmax(proba[k]))]),
+                    "probabilities": {str(c): float(p) for c, p in zip(le.classes_, proba[k])},
+                }
+    states = sorted(per_state)
+    actual = [per_state[s]["actual"] for s in states]
+    metrics = {}
+    for name in ["rf", "logit"]:
+        pred = [per_state[s][name]["pred"] for s in states]
+        metrics[name] = {
+            "oof_accuracy": float(accuracy_score(actual, pred)),
+            "oof_macro_f1": float(f1_score(
+                actual, pred, labels=list(le.classes_), average="macro", zero_division=0
+            )),
+        }
+    meta = {
+        "classes": [str(c) for c in le.classes_],
+        "class_counts": {str(c): int((y == c).sum()) for c in le.classes_},
+        "stratified": False,
+    }
+    return per_state, metrics, meta
 
-    models = classification_models()
-    rf = models["rf"]
-    logit = models["logit"]
 
-    rf.fit(X, y_enc)
-    logit.fit(X, y_enc)
+def run_backtest(X_reg, y_reg, X_type, y_type, X_risk, y_risk):
+    """Four-fold, state-level out-of-fold backtest shared by all three tasks.
+    Every stored prediction for a state comes from a model that never saw that state."""
+    states = sorted(set(X_reg.index) & set(X_type.index) & set(X_risk.index))
+    fold_of, train_states, valid_states = make_folds(states)
 
-    rf_pred = rf.predict(X)
-    logit_pred = logit.predict(X)
+    reg, reg_metrics = _regression_backtest(X_reg.loc[states], y_reg.loc[states], fold_of, train_states, valid_states)
+    typ, type_metrics, type_meta = _classification_backtest(X_type.loc[states], y_type.loc[states], fold_of, train_states, valid_states)
+    risk, risk_metrics, risk_meta = _classification_backtest(X_risk.loc[states], y_risk.loc[states], fold_of, train_states, valid_states)
 
-    metrics = {
-        "rf_acc_train": float(accuracy_score(y_enc, rf_pred)),
-        "rf_f1_train": float(f1_score(y_enc, rf_pred, average="macro")),
-        "logit_acc_train": float(accuracy_score(y_enc, logit_pred)),
-        "logit_f1_train": float(f1_score(y_enc, logit_pred, average="macro")),
-        "classes": list(le.classes_),
+    meta = {
+        "evaluation": "out_of_fold",
+        "n_states": len(states),
+        "n_folds": BACKTEST_FOLDS,
+        "seed": BACKTEST_SEED,
+        "limitations": LIMITATIONS,
+    }
+    return {
+        **meta,
+        "fold_of": fold_of,
+        "fold_train_states": train_states,
+        "fold_valid_states": valid_states,
+        "regression": {"per_state": reg, "metrics": {"meta": {**meta, "unit": "crime_rate_per_100k"}, **reg_metrics}},
+        "crime_type": {"per_state": typ, "metrics": {"meta": {**meta, **type_meta}, **type_metrics}},
+        "risk": {"per_state": risk, "metrics": {"meta": {**meta, **risk_meta}, **risk_metrics}},
     }
 
-    joblib.dump(rf, Path(models_dir) / "type_rf.pkl")
-    joblib.dump(logit, Path(models_dir) / "type_logit.pkl")
-    joblib.dump(le, Path(models_dir) / "type_enc.pkl")
-    joblib.dump(list(X.columns), Path(models_dir) / "type_feat.pkl")
-    joblib.dump(metrics, Path(models_dir) / "type_metrics.pkl")
 
-    return metrics
+def fit_final_models(X_reg, y_reg, X_type, y_type, X_risk, y_risk, models_dir=MODELS_DIR):
+    """Full-data models and their feature lists / encoders. These are NOT used as
+    evaluation evidence; all reported quality comes from run_backtest()."""
+    models_dir = Path(models_dir)
+    y_log = np.log1p(y_reg)
+    for name, model in regression_models().items():
+        model.fit(X_reg, y_log)
+        joblib.dump(model, models_dir / f"reg_{name}.pkl")
+    joblib.dump(list(X_reg.columns), models_dir / "reg_feat.pkl")
 
-
-def train_risk(X, y, models_dir=MODELS_DIR):
-    le = LabelEncoder()
-    y_enc = le.fit_transform(y)
-
-    models = classification_models()
-    rf = models["rf"]
-    logit = models["logit"]
-
-    rf.fit(X, y_enc)
-    logit.fit(X, y_enc)
-
-    rf_pred = rf.predict(X)
-    logit_pred = logit.predict(X)
-
-    metrics = {
-        "rf_acc_train": float(accuracy_score(y_enc, rf_pred)),
-        "rf_f1_train": float(f1_score(y_enc, rf_pred, average="macro")),
-        "logit_acc_train": float(accuracy_score(y_enc, logit_pred)),
-        "logit_f1_train": float(f1_score(y_enc, logit_pred, average="macro")),
-        "classes": list(le.classes_),
-    }
-
-    joblib.dump(rf, Path(models_dir) / "risk_rf.pkl")
-    joblib.dump(logit, Path(models_dir) / "risk_logit.pkl")
-    joblib.dump(le, Path(models_dir) / "risk_enc.pkl")
-    joblib.dump(list(X.columns), Path(models_dir) / "risk_feat.pkl")
-    joblib.dump(metrics, Path(models_dir) / "risk_metrics.pkl")
-
-    return metrics
+    for prefix, X, y in [("type", X_type, y_type), ("risk", X_risk, y_risk)]:
+        le = LabelEncoder()
+        y_enc = le.fit_transform(y)
+        for name, model in classification_models().items():
+            model.fit(X, y_enc)
+            joblib.dump(model, models_dir / f"{prefix}_{name}.pkl")
+        joblib.dump(le, models_dir / f"{prefix}_enc.pkl")
+        joblib.dump(list(X.columns), models_dir / f"{prefix}_feat.pkl")
 
 
 def train_all(data_path=DATA_PATH, models_dir=MODELS_DIR):
-    Path(models_dir).mkdir(parents=True, exist_ok=True)
+    models_dir = Path(models_dir)
+    models_dir.mkdir(parents=True, exist_ok=True)
     df = load(data_path)
     cols = detect(df)
 
     state_year = build_state_year_table(df, cols)
     X_reg, y_reg, state_feat = build_state_features(state_year, state_col=cols["state"])
     X_type, y_type, crime_cols = build_crime_type_dataset(df, cols)
+    X_risk, y_risk = build_risk_dataset(state_feat)
 
-    state_feat_with_target = state_feat.copy()
-    X_risk, y_risk = build_risk_dataset(state_feat_with_target)
+    backtest = run_backtest(X_reg, y_reg, X_type, y_type, X_risk, y_risk)
+    fit_final_models(X_reg, y_reg, X_type, y_type, X_risk, y_risk, models_dir)
 
-    reg_metrics = train_regression(X_reg, y_reg, models_dir)
-    type_metrics = train_crime_type(X_type, y_type, models_dir)
-    risk_metrics = train_risk(X_risk, y_risk, models_dir)
-
-    artifacts = {
+    joblib.dump(backtest["regression"]["metrics"], models_dir / "reg_metrics.pkl")
+    joblib.dump(backtest["crime_type"]["metrics"], models_dir / "type_metrics.pkl")
+    joblib.dump(backtest["risk"]["metrics"], models_dir / "risk_metrics.pkl")
+    joblib.dump({
         "state_year": state_year,
-        "state_feature_table": state_feat_with_target,
+        "state_feature_table": state_feat,
         "crime_type_labels": crime_cols,
-    }
-
-    joblib.dump(artifacts, Path(models_dir) / "derived_data.pkl")
+    }, models_dir / "derived_data.pkl")
+    # Written last: its presence marks a complete, consistent artifact set.
+    joblib.dump(backtest, models_dir / "backtest_results.pkl")
 
     return {
-        "regression": reg_metrics,
-        "crime_type": type_metrics,
-        "risk": risk_metrics,
+        "regression": backtest["regression"]["metrics"],
+        "crime_type": backtest["crime_type"]["metrics"],
+        "risk": backtest["risk"]["metrics"],
     }
 
 

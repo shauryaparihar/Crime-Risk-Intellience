@@ -9,7 +9,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import shap
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -39,8 +38,6 @@ class Runtime:
     cols: dict
     states: set
     state_year: pd.DataFrame
-    X_reg: pd.DataFrame
-    y_reg: pd.Series
     state_feat: pd.DataFrame
     models: dict
     geojson: Any
@@ -64,7 +61,7 @@ def initialize_runtime(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=
         models = load_models(models_dir)
 
     state_year = build_state_year_table(df, cols)
-    X_reg, y_reg, state_feat = build_state_features(state_year, state_col=cols["state"])
+    _, _, state_feat = build_state_features(state_year, state_col=cols["state"])
 
     geojson = None
     if Path(geojson_path).is_file():
@@ -73,7 +70,7 @@ def initialize_runtime(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=
 
     return Runtime(
         df=df, cols=cols, states=set(df[cols["state"]].unique().tolist()),
-        state_year=state_year, X_reg=X_reg, y_reg=y_reg, state_feat=state_feat,
+        state_year=state_year, state_feat=state_feat,
         models=models, geojson=geojson, models_dir=Path(models_dir),
     )
 
@@ -135,59 +132,37 @@ def create_app(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=GEOJSON_
 
     @app.get("/api/forecast")
     @limiter.limit("60/minute")
-    def get_forecast(request: Request, state: str = Query(..., description="The state to forecast for")):
+    def get_forecast(request: Request, state: str = Query(..., description="The state to look up")):
+        """Stored out-of-fold backtest of the 2023 rate: the fold model never saw this state."""
         rt = require_ready(request)
         require_state(rt, state)
-        models = rt.models
-        if state not in rt.X_reg.index:
+        bt = rt.models["backtest_results"]["regression"]
+        rec = bt["per_state"].get(state)
+        if rec is None:
             raise HTTPException(status_code=404, detail="State not found")
-
-        X_one = rt.X_reg.loc[[state]].reindex(columns=models["reg_feat"], fill_value=0)
-
-        lr_pred = float(np.expm1(models["reg_lr"].predict(X_one))[0])
-        ridge_pred = float(np.expm1(models["reg_ridge"].predict(X_one))[0])
-        rf_pred = float(np.expm1(models["reg_rf"].predict(X_one))[0])
-        ensemble_pred = float(np.mean([lr_pred, ridge_pred, rf_pred]))
-
-        rf_core = models["reg_rf"].named_steps["model"]
-        rf_imputer = models["reg_rf"].named_steps["imputer"]
-
-        X_one_imp = rf_imputer.transform(X_one)
-        rf_tree_preds = np.array([
-            np.expm1(tree.predict(X_one_imp))[0]
-            for tree in rf_core.estimators_
-        ])
-
-        pred_low = float(np.percentile(rf_tree_preds, 10))
-        pred_high = float(np.percentile(rf_tree_preds, 90))
-        pred_std = float(np.std(rf_tree_preds))
-        actual = float(rt.y_reg.loc[state]) if state in rt.y_reg.index else 0.0
-
-        # SHAP
-        X_one_df_imp = pd.DataFrame(X_one_imp, index=X_one.index, columns=models["reg_feat"])
-        explainer = shap.TreeExplainer(rf_core)
-        shap_values = explainer.shap_values(X_one_df_imp)
-        shap_list = [{"feature": msg, "value": val} for msg, val in zip(models["reg_feat"], shap_values[0])]
-        shap_list = sorted(shap_list, key=lambda x: abs(x["value"]), reverse=True)
-
-        feat_imp = [{"feature": f, "importance": i} for f, i in zip(models["reg_feat"], rf_core.feature_importances_)]
-        feat_imp = sorted(feat_imp, key=lambda x: x["importance"], reverse=True)
+        spread = rec["rf_tree_spread"]
+        shap_list = sorted(rec["shap"], key=lambda x: abs(x["value"]), reverse=True)
+        feat_imp = sorted(rec["feature_importance"], key=lambda x: x["importance"], reverse=True)
 
         return {
+            "evaluation": "out_of_fold",
+            "fold": rec["fold"],
             "predictions": {
-                "linear": round(lr_pred, 2),
-                "ridge": round(ridge_pred, 2),
-                "random_forest": round(rf_pred, 2),
-                "ensemble": round(ensemble_pred, 2),
-                "actual": round(actual, 2),
-                "absolute_error": round(abs(ensemble_pred - actual), 2)
+                "linear": round(rec["lr"], 2),
+                "ridge": round(rec["ridge"], 2),
+                "random_forest": round(rec["rf"], 2),
+                "ensemble": round(rec["ensemble"], 2),
+                "actual": round(rec["observed"], 2),
+                "absolute_error": round(rec["abs_error"]["ensemble"], 2)
             },
             "uncertainty": {
-                "low": round(pred_low, 2),
-                "high": round(pred_high, 2),
-                "std": round(pred_std, 2)
+                "label": "RF tree spread (10th-90th percentile)",
+                "calibrated": False,
+                "low": round(spread["p10"], 2),
+                "high": round(spread["p90"], 2),
+                "std": round(spread["std"], 2)
             },
-            "metrics": models["reg_metrics"],
+            "metrics": bt["metrics"],
             "shap": shap_list,
             "feature_importance": feat_imp
         }
@@ -197,34 +172,23 @@ def create_app(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=GEOJSON_
     def get_crime_pattern(request: Request, state: str = Query(...)):
         rt = require_ready(request)
         require_state(rt, state)
-        df, cols, models = rt.df, rt.cols, rt.models
+        df, cols = rt.df, rt.cols
+        bt = rt.models["backtest_results"]["crime_type"]
 
         grp = df.groupby([cols["state"], cols["year"], cols["crime_type"]], as_index=False)[cols["total"]].sum()
         state_sub = grp[grp[cols["state"]] == state].copy()
         pivot = state_sub.pivot_table(index=cols["year"], columns=cols["crime_type"], values=cols["total"], aggfunc="sum", fill_value=0)
         share = pivot.div(pivot.sum(axis=1).replace(0, np.nan), axis=0).fillna(0)
 
-        result = {}
-        if 2022 in share.index and 2021 in share.index:
-            X_type_one = pd.DataFrame(index=[state])
-            base_years = [y for y in [2019, 2020, 2021, 2022] if y in share.index]
-            for c in share.columns:
-                X_type_one[f"avg_{c}"] = float(share.loc[base_years, c].mean())
-                X_type_one[f"last_{c}"] = float(share.loc[2022, c])
-                X_type_one[f"prev_{c}"] = float(share.loc[2021, c])
-                X_type_one[f"delta_{c}"] = float(share.loc[2022, c] - share.loc[2021, c])
-
-            X_type_one = X_type_one.reindex(columns=models["type_feat"], fill_value=0)
-
-            pred_idx = models["type_rf"].predict(X_type_one)[0]
-            pred_label = models["type_enc"].inverse_transform([pred_idx])[0]
-            probs = models["type_rf"].predict_proba(X_type_one)[0]
-
-            prob_list = [{"type": cls, "probability": p} for cls, p in zip(models["type_enc"].classes_, probs)]
+        result = {"evaluation": "out_of_fold"}
+        rec = bt["per_state"].get(state)
+        if rec is not None:
+            prob_list = [{"type": cls, "probability": p} for cls, p in rec["rf"]["probabilities"].items()]
             prob_list.sort(key=lambda x: x["probability"], reverse=True)
-
             result["prediction"] = {
-                "label": pred_label,
+                "label": rec["rf"]["pred"],
+                "actual_dominant_2023": rec["actual"],
+                "fold": rec["fold"],
                 "probabilities": prob_list
             }
 
@@ -240,47 +204,40 @@ def create_app(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=GEOJSON_
             trend_data.append(item)
 
         result["trend"] = trend_data
-        result["metrics"] = models["type_metrics"]
+        result["metrics"] = bt["metrics"]
 
         return result
 
     @app.get("/api/risk-analysis")
     @limiter.limit("60/minute")
     def get_risk_analysis(request: Request):
+        """Out-of-fold risk class per state (each from a model that excluded that state)."""
         rt = require_ready(request)
-        models = rt.models
-
-        risk_X = rt.state_feat.drop(columns=["rate_2023"], errors="ignore").reindex(columns=models["risk_feat"], fill_value=0)
-        risk_probs = models["risk_rf"].predict_proba(risk_X)
-        risk_pred = models["risk_rf"].predict(risk_X)
-        risk_labels = models["risk_enc"].inverse_transform(risk_pred)
-
-        risk_df = rt.state_feat.copy()
-        risk_df["Predicted_Risk_Class"] = risk_labels
-
-        classes = list(models["risk_enc"].classes_)
-        for i, c in enumerate(classes):
-            risk_df[f"prob_{c}"] = risk_probs[:, i]
-
-        if {"low", "medium", "high"}.issubset(set(classes)):
-            risk_df["Risk_Score"] = risk_df["prob_low"] * 1 + risk_df["prob_medium"] * 2 + risk_df["prob_high"] * 3
-        else:
-            risk_df["Risk_Score"] = risk_probs.max(axis=1)
-
-        risk_df = risk_df.sort_values("Risk_Score", ascending=False)
+        bt = rt.models["backtest_results"]["risk"]
+        w = {"low": 1, "medium": 2, "high": 3}
 
         analysis_results = []
-        for state, row in risk_df.iterrows():
+        for state, rec in bt["per_state"].items():
+            probs = rec["rf"]["probabilities"]
+            if set(w) == set(probs):
+                score = sum(probs[c] * w[c] for c in w)
+            else:
+                score = max(probs.values())
             item = {"state": state}
-            for k in ["rate_2019", "rate_2020", "rate_2021", "rate_2022", "rate_2023", "trend_19_22", "momentum_21_22", "volatility_19_22", "Predicted_Risk_Class", "Risk_Score"]:
-                if k in row:
-                    v = row[k]
-                    item[k] = float(v) if pd.notna(v) and isinstance(v, (int, float, np.number)) else v
+            row = rt.state_feat.loc[state]
+            for k in ["rate_2019", "rate_2020", "rate_2021", "rate_2022", "rate_2023", "trend_19_22", "momentum_21_22", "volatility_19_22"]:
+                if k in row and pd.notna(row[k]):
+                    item[k] = float(row[k])
+            item["Predicted_Risk_Class"] = rec["rf"]["pred"]
+            item["Actual_Risk_Class"] = rec["actual"]
+            item["Risk_Score"] = float(score)
             analysis_results.append(item)
+        analysis_results.sort(key=lambda r: r["Risk_Score"], reverse=True)
 
         return {
+            "evaluation": "out_of_fold",
             "rankings": analysis_results,
-            "metrics": models["risk_metrics"]
+            "metrics": bt["metrics"]
         }
 
     @app.get("/api/state-drilldown")
@@ -327,17 +284,22 @@ def create_app(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=GEOJSON_
     @limiter.limit("60/minute")
     def get_metrics(request: Request):
         rt = require_ready(request)
+        bt = rt.models["backtest_results"]
         try:
-            mtime = (rt.models_dir / "reg_metrics.pkl").stat().st_mtime
+            mtime = (rt.models_dir / "backtest_results.pkl").stat().st_mtime
             train_date = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
         except OSError:
             train_date = "Unknown"
 
         return {
             "training_date": train_date,
-            "regression": rt.models.get("reg_metrics", {}),
-            "classification": rt.models.get("type_metrics", {}),
-            "risk": rt.models.get("risk_metrics", {})
+            "evaluation": bt["evaluation"],
+            "n_states": bt["n_states"],
+            "n_folds": bt["n_folds"],
+            "limitations": bt["limitations"],
+            "regression": bt["regression"]["metrics"],
+            "classification": bt["crime_type"]["metrics"],
+            "risk": bt["risk"]["metrics"]
         }
 
     return app

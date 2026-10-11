@@ -20,8 +20,13 @@ def test_metrics_endpoint(client):
     response = client.get("/api/metrics")
     assert response.status_code == 200
     data = response.json()
-    for key in ("training_date", "regression", "classification", "risk"):
+    for key in ("training_date", "regression", "classification", "risk", "limitations"):
         assert key in data
+    assert data["evaluation"] == "out_of_fold"
+    assert data["n_states"] == 12 and data["n_folds"] == 4
+    assert "oof_mae_rate_per_100k" in data["regression"]["rf"]
+    assert "oof_accuracy" in data["risk"]["rf"]
+    assert "train" not in str(data).lower().replace("training_date", "")
 
 
 def test_forecast_schema(client):
@@ -32,6 +37,9 @@ def test_forecast_schema(client):
         assert key in data
     assert isinstance(data["predictions"]["ensemble"], float)
     assert isinstance(data["predictions"]["linear"], float)
+    assert data["evaluation"] == "out_of_fold"
+    assert data["uncertainty"]["calibrated"] is False
+    assert "tree spread" in data["uncertainty"]["label"]
 
 
 def test_crime_pattern_schema(client):
@@ -66,3 +74,23 @@ def test_missing_state_is_422(client, path):
     response = client.get(path)
     assert response.status_code == 422
     assert "detail" in response.json()
+
+
+def test_forecast_serves_stored_oof_values(client):
+    from api import app
+    stored = app.state.runtime.models["backtest_results"]["regression"]["per_state"]["Bihar"]
+    pred = client.get("/api/forecast?state=Bihar").json()["predictions"]
+    assert pred["ensemble"] == round(stored["ensemble"], 2)
+    assert pred["actual"] == round(stored["observed"], 2)
+
+
+def test_crime_pattern_and_risk_serve_stored_oof_values(client):
+    from api import app
+    bt = app.state.runtime.models["backtest_results"]
+    cp = client.get("/api/crime-pattern?state=Bihar").json()
+    assert cp["prediction"]["label"] == bt["crime_type"]["per_state"]["Bihar"]["rf"]["pred"]
+    total = sum(p["probability"] for p in cp["prediction"]["probabilities"])
+    assert total == pytest.approx(1.0)
+    risk = client.get("/api/risk-analysis").json()
+    row = next(r for r in risk["rankings"] if r["state"] == "Bihar")
+    assert row["Predicted_Risk_Class"] == bt["risk"]["per_state"]["Bihar"]["rf"]["pred"]
