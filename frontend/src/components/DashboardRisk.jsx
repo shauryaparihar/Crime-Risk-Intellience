@@ -16,7 +16,10 @@ export default function DashboardRisk({ apiBase }) {
       <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
         <div style={{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
           <h3 className="text-lg font-bold text-main">Risk Classification Backtest and Ranking</h3>
-          <p className="text-sm text-secondary mt-1">Relative risk class (terciles of the 2023 rate) predicted from 2019–2022 features by a model that did not train on that state. Out-of-fold backtest on unverified sample data, 12 states.</p>
+          <p className="text-sm text-secondary mt-1">Relative risk class (terciles of the 2023 rate) predicted from 2019–2022 features by a model that did not train on that state. Out-of-fold backtest on unverified sample data, 12 states.
+            {data.metrics?.baselines && (
+              <> Simple baseline (rank states by last year&apos;s rate): {(data.metrics.baselines.rank_by_last_year_rate.accuracy * 100).toFixed(0)}% correct. Accuracies here come from one split; other splits average lower.</>
+            )}</p>
         </div>
         <div style={{ overflowX: 'auto', padding: 'var(--space-2)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 'var(--font-size-sm)' }}>

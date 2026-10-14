@@ -39,9 +39,29 @@ Four views, all over the same 12-state sample:
 
 These come from `train_all()` on the bundled CSV (shown by `GET /api/metrics`). They can change if the data, library versions or code change.
 
+### Do the models beat a simple baseline? Not on the rate task.
+
+Baselines need no fitting, so they show what a model must beat. They are computed in the same backtest and returned by `GET /api/metrics` under `baselines` and `vs_baseline`.
+
+| Task | Baseline | Result | Best model |
+|---|---|---|---|
+| 2023 rate | Last year's rate (2023 = 2022) | MAE 3.7, R² 0.86 | RF MAE 6.7, R² 0.61 |
+| | Average of 2019–2022 | MAE 3.5, R² 0.87 | |
+| | Average of the other states | MAE 13.2, R² −0.19 | |
+| Risk class | Rank states by last year's rate | accuracy 83% | RF 92% on this split |
+| Dominant crime | Always the most common class | accuracy 33% | Logistic 50%, RF 8% |
+
+On the rate task no model beats the best baseline, because rates barely change year to year (2022 and 2023 correlate at 0.95). The classification results are from a single split (seed 42); repeating the backtest with other fold seeds gives lower averages (risk RF about 63%, dominant-crime logistic about 39%). Reproduce the checks with:
+
+```bash
+python backend/scripts/evaluation_report.py            # 20 fold seeds, bootstrap, per-state errors
+python backend/scripts/evaluation_report.py --seeds 5  # quicker
+```
+
 ### Limitations
 
 - **Only 12 states**, so every metric rests on 12 held-out predictions and can swing a lot.
+- **The models do not beat a no-model baseline** on the rate task (see above), and the published classification numbers come from one split that is at the favourable end of the range.
 - **Dominant-crime classes are imbalanced** (4/3/2/2/1 states per class; one class has a single state). Stratified folds are impossible, and a held-out singleton class can never be predicted. Treat this task as unreliable.
 - **The risk task is easier than it looks:** labels are terciles of the 2023 rate computed over all 12 states, and the features are the earlier-year rates of the same states.
 - **"RF tree spread (10th–90th percentile)"** is the spread of individual trees. It is *not* a calibrated confidence or prediction interval.
@@ -79,7 +99,7 @@ cd backend
 uvicorn api:app --port 8001
 ```
 
-On startup the API checks all 17 saved model files in `backend/models/`. If any is missing or unreadable it trains the full set once (a few seconds) and becomes ready without a restart. `GET /api/status` reports the real state; if startup fails, model endpoints return `503`. Paths are resolved from the code's location, so the command also works as `uvicorn --app-dir backend api:app --port 8001` from the repository root.
+On startup the API checks all 17 saved model files in `backend/models/`. If any is missing or unreadable, or if the CSV or the scikit-learn, NumPy, pandas or SHAP versions differ from what produced the saved results (a SHA-256 of the data and the library versions are stored with them), it trains the full set once (a few seconds) and becomes ready without a restart. `GET /api/status` reports the real state; if startup fails, model endpoints return `503`. Paths are resolved from the code's location, so the command also works as `uvicorn --app-dir backend api:app --port 8001` from the repository root.
 
 Frontend (port **5174**), in a second terminal:
 
@@ -123,7 +143,8 @@ The backend image trains its models at build time and the build fails if trainin
 
 ## API
 
-All endpoints are `GET` under `/api`: `status`, `states`, `forecast?state=`, `crime-pattern?state=`, `risk-analysis`, `state-drilldown?state=`, `geojson`, `metrics`.
+All endpoints are `GET` under `/api`: `status`, `ready`, `states`, `forecast?state=`, `crime-pattern?state=`, `risk-analysis`, `state-drilldown?state=`, `geojson`, `metrics`.
+`status` always answers 200 with a readiness flag, for people. `ready` is the platform health probe: 200 when the app can serve, 503 after a failed startup (not rate limited).
 Unknown states return `404`, a missing `state` returns `422`, and `503` means data or models failed to initialize. `forecast`, `crime-pattern`, `risk-analysis` and `metrics` return the stored out-of-fold results (`"evaluation": "out_of_fold"`); nothing is refit per request.
 
 ## Possible future work (not implemented)

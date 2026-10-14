@@ -1,3 +1,6 @@
+import hashlib
+import platform
+from importlib import metadata
 from pathlib import Path
 
 import joblib
@@ -39,6 +42,43 @@ def artifact_path(name, models_dir=MODELS_DIR):
 
 def missing_artifacts(models_dir=MODELS_DIR):
     return [n for n in ARTIFACT_NAMES if not artifact_path(n, models_dir).is_file()]
+
+
+def data_fingerprint(data_path=DATA_PATH):
+    """SHA-256 of the CSV bytes: identifies exactly which data the artifacts were built from."""
+    h = hashlib.sha256()
+    with open(data_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# Libraries whose version changes can change results or break saved pickles.
+TRACKED_LIBRARIES = ["scikit-learn", "numpy", "pandas", "shap"]
+
+
+def library_versions():
+    versions = {"python": platform.python_version()}
+    for name in TRACKED_LIBRARIES:
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            versions[name] = "not installed"
+    return versions
+
+
+def stale_reason(models, data_path=DATA_PATH):
+    """Why loaded artifacts must not be served, or None if they match the current data and libraries.
+    Artifacts written before fingerprints existed have none, so they are rebuilt once."""
+    backtest = models.get("backtest_results") or {}
+    if backtest.get("data_sha256") != data_fingerprint(data_path):
+        return "data file changed or artifacts predate fingerprints"
+    saved = backtest.get("library_versions") or {}
+    current = library_versions()
+    changed = [k for k in TRACKED_LIBRARIES if saved.get(k) != current.get(k)]
+    if changed:
+        return f"library versions changed: {', '.join(changed)}"
+    return None
 
 
 def validate_schema(df):
@@ -180,6 +220,19 @@ def build_risk_dataset(state_features):
     return X, y
 
 
+def build_datasets(df, cols):
+    """Everything the backtest and training need, built once from the validated frame."""
+    state_year = build_state_year_table(df, cols)
+    X_reg, y_reg, state_feat = build_state_features(state_year, state_col=cols["state"])
+    X_type, y_type, crime_cols = build_crime_type_dataset(df, cols)
+    X_risk, y_risk = build_risk_dataset(state_feat)
+    return {
+        "state_year": state_year, "state_feat": state_feat, "crime_cols": crime_cols,
+        "X_reg": X_reg, "y_reg": y_reg, "X_type": X_type, "y_type": y_type,
+        "X_risk": X_risk, "y_risk": y_risk,
+    }
+
+
 BACKTEST_SEED = 42
 BACKTEST_FOLDS = 4
 
@@ -190,6 +243,7 @@ LIMITATIONS = [
     "Dataset is an unverified NCRB-style sample, not official data.",
     "RF tree spread is the 10th-90th percentile of individual trees, not a calibrated prediction interval.",
     "Risk classes are terciles of the 2023 rate across all 12 states (labels use every state's 2023 value).",
+    "Compare every model with the reported baselines: on this sample a one-line rule such as last year's rate is hard to beat.",
 ]
 
 
@@ -335,21 +389,76 @@ def _classification_backtest(X, y, fold_of, train_states, valid_states):
     return per_state, metrics, meta
 
 
-def run_backtest(X_reg, y_reg, X_type, y_type, X_risk, y_risk):
+def _regression_baselines(X, y):
+    """Rules that need no fitting. They show what a model must beat to add value."""
+    obs = y.to_numpy(float)
+    others_mean = (obs.sum() - obs) / (len(obs) - 1)  # mean of the other 11 states
+    preds = {
+        "last_year_rate": X["rate_2022"].to_numpy(float),
+        "mean_2019_2022": X["avg_19_22"].to_numpy(float),
+        "mean_of_other_states": others_mean,
+    }
+    return {
+        name: {"mae_rate_per_100k": float(mean_absolute_error(obs, p)), "r2": float(r2_score(obs, p))}
+        for name, p in preds.items()
+    }
+
+
+def _risk_baselines(X, y):
+    r22 = X["rate_2022"]
+    q_low, q_high = r22.quantile(0.33), r22.quantile(0.66)
+    pred = r22.apply(lambda v: "low" if v <= q_low else ("high" if v >= q_high else "medium"))
+    return {
+        "rank_by_last_year_rate": {"accuracy": float(accuracy_score(y, pred))},
+        "most_common_class": {"accuracy": float(y.value_counts().max() / len(y))},
+    }
+
+
+def _type_baselines(X, y):
+    last_cols = [c for c in X.columns if c.startswith("last_")]
+    last = X[last_cols].idxmax(axis=1).str.replace("last_", "", n=1, regex=False)
+    return {
+        "same_as_last_year": {"accuracy": float(accuracy_score(y, last))},
+        "most_common_class": {"accuracy": float(y.value_counts().max() / len(y))},
+    }
+
+
+def _compare_to_baselines(metrics, baselines, models, key, lower_is_better):
+    """Add `baselines` and `vs_baseline` (which models beat the best baseline) to a metrics dict."""
+    pick = min if lower_is_better else max
+    best_name = pick(baselines, key=lambda n: baselines[n][key])
+    best_value = baselines[best_name][key]
+    beats = {}
+    for m in models:
+        value = metrics[m]["oof_mae_rate_per_100k" if lower_is_better else "oof_accuracy"]
+        beats[m] = bool(value < best_value) if lower_is_better else bool(value > best_value)
+    metrics["baselines"] = baselines
+    metrics["vs_baseline"] = {"best_baseline": best_name, "best_value": best_value, "beats": beats}
+
+
+def run_backtest(X_reg, y_reg, X_type, y_type, X_risk, y_risk, seed=BACKTEST_SEED):
     """Four-fold, state-level out-of-fold backtest shared by all three tasks.
-    Every stored prediction for a state comes from a model that never saw that state."""
+    Every stored prediction for a state comes from a model that never saw it.
+    `seed` only changes which states share a fold; the default is the published run."""
     states = sorted(set(X_reg.index) & set(X_type.index) & set(X_risk.index))
-    fold_of, train_states, valid_states = make_folds(states)
+    fold_of, train_states, valid_states = make_folds(states, seed=seed)
 
     reg, reg_metrics = _regression_backtest(X_reg.loc[states], y_reg.loc[states], fold_of, train_states, valid_states)
     typ, type_metrics, type_meta = _classification_backtest(X_type.loc[states], y_type.loc[states], fold_of, train_states, valid_states)
     risk, risk_metrics, risk_meta = _classification_backtest(X_risk.loc[states], y_risk.loc[states], fold_of, train_states, valid_states)
 
+    _compare_to_baselines(reg_metrics, _regression_baselines(X_reg.loc[states], y_reg.loc[states]),
+                          ["lr", "ridge", "rf", "ensemble"], "mae_rate_per_100k", lower_is_better=True)
+    _compare_to_baselines(type_metrics, _type_baselines(X_type.loc[states], y_type.loc[states]),
+                          ["rf", "logit"], "accuracy", lower_is_better=False)
+    _compare_to_baselines(risk_metrics, _risk_baselines(X_risk.loc[states], y_risk.loc[states]),
+                          ["rf", "logit"], "accuracy", lower_is_better=False)
+
     meta = {
         "evaluation": "out_of_fold",
         "n_states": len(states),
         "n_folds": BACKTEST_FOLDS,
-        "seed": BACKTEST_SEED,
+        "seed": seed,
         "limitations": LIMITATIONS,
     }
     return {
@@ -388,22 +497,21 @@ def train_all(data_path=DATA_PATH, models_dir=MODELS_DIR):
     models_dir.mkdir(parents=True, exist_ok=True)
     df = load(data_path)
     cols = detect(df)
+    d = build_datasets(df, cols)
 
-    state_year = build_state_year_table(df, cols)
-    X_reg, y_reg, state_feat = build_state_features(state_year, state_col=cols["state"])
-    X_type, y_type, crime_cols = build_crime_type_dataset(df, cols)
-    X_risk, y_risk = build_risk_dataset(state_feat)
-
-    backtest = run_backtest(X_reg, y_reg, X_type, y_type, X_risk, y_risk)
-    fit_final_models(X_reg, y_reg, X_type, y_type, X_risk, y_risk, models_dir)
+    backtest = run_backtest(d["X_reg"], d["y_reg"], d["X_type"], d["y_type"], d["X_risk"], d["y_risk"])
+    # Which data and libraries produced these results; checked again at startup.
+    backtest["data_sha256"] = data_fingerprint(data_path)
+    backtest["library_versions"] = library_versions()
+    fit_final_models(d["X_reg"], d["y_reg"], d["X_type"], d["y_type"], d["X_risk"], d["y_risk"], models_dir)
 
     joblib.dump(backtest["regression"]["metrics"], models_dir / "reg_metrics.pkl")
     joblib.dump(backtest["crime_type"]["metrics"], models_dir / "type_metrics.pkl")
     joblib.dump(backtest["risk"]["metrics"], models_dir / "risk_metrics.pkl")
     joblib.dump({
-        "state_year": state_year,
-        "state_feature_table": state_feat,
-        "crime_type_labels": crime_cols,
+        "state_year": d["state_year"],
+        "state_feature_table": d["state_feat"],
+        "crime_type_labels": d["crime_cols"],
     }, models_dir / "derived_data.pkl")
     # Written last: its presence marks a complete, consistent artifact set.
     joblib.dump(backtest, models_dir / "backtest_results.pkl")
