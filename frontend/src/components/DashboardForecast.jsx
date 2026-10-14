@@ -135,6 +135,10 @@ export default function DashboardForecast({ state, apiBase }) {
       <p className="text-xs text-tertiary mt-4">
         {data.uncertainty.label}: {data.uncertainty.low}–{data.uncertainty.high} (not a calibrated confidence or prediction interval).
         Random Forest held-out error across all 12 states: {data.metrics?.rf?.oof_mae_rate_per_100k?.toFixed(2)} per 100k (out-of-fold MAE).
+        {data.metrics?.baselines && (
+          <> No-model baselines: last year&apos;s rate {data.metrics.baselines.last_year_rate.mae_rate_per_100k.toFixed(2)}, 2019&ndash;2022 average {data.metrics.baselines.mean_2019_2022.mae_rate_per_100k.toFixed(2)}
+          {!Object.values(data.metrics.vs_baseline.beats).some(Boolean) && '. No model beats the best baseline.'}</>
+        )}
       </p>
     </div>
   );

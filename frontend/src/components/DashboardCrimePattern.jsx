@@ -63,6 +63,9 @@ export default function DashboardCrimePattern({ state, apiBase }) {
           Prediction made by a model that did not train on {state}. Dominant-crime classification is unreliable here: only 12
           states, imbalanced classes (one has a single state). Out-of-fold accuracy: Random Forest {(data.metrics?.rf?.oof_accuracy * 100).toFixed(0)}%,
           Logistic {(data.metrics?.logit?.oof_accuracy * 100).toFixed(0)}%.
+          {data.metrics?.baselines && (
+            <> Baselines: always guess the most common class {(data.metrics.baselines.most_common_class.accuracy * 100).toFixed(0)}%, repeat last year&apos;s dominant crime {(data.metrics.baselines.same_as_last_year.accuracy * 100).toFixed(0)}%. Single split; other splits average lower.</>
+          )}
         </p>
       )}
 

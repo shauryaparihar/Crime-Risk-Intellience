@@ -139,6 +139,10 @@ function App() {
                   <span className="font-bold text-main">{fmt(metrics.regression?.rf?.oof_mae_rate_per_100k, 2)} /100k</span>
                 </div>
                 <div className="flex justify-between items-center">
+                  <span>Last-year baseline MAE</span>
+                  <span className="font-bold text-main">{fmt(metrics.regression?.baselines?.last_year_rate?.mae_rate_per_100k, 2)} /100k</span>
+                </div>
+                <div className="flex justify-between items-center">
                   <span>RF rate R²</span>
                   <span className="font-bold text-main">{fmt(metrics.regression?.rf?.oof_r2, 2)}</span>
                 </div>
@@ -152,6 +156,8 @@ function App() {
                 </div>
                 <p className="text-[10px] text-tertiary leading-relaxed pt-1">
                   Only {metrics.n_states} states: treat these as weak evidence.
+                  {metrics.regression?.vs_baseline && !Object.values(metrics.regression.vs_baseline.beats).some(Boolean)
+                    && ' No rate model beats the simplest baseline (a no-model rule using past rates).'}
                 </p>
               </div>
             ) : (
