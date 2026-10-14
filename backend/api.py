@@ -25,6 +25,7 @@ from models import (
     load,
     load_models,
     missing_artifacts,
+    stale_reason,
     train_all,
 )
 
@@ -53,10 +54,17 @@ def initialize_runtime(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=
     if missing_artifacts(models_dir):
         log.warning("[startup] Missing artifacts %s. Training full set...", missing_artifacts(models_dir))
         train_all(data_path, models_dir)
+    models = None
     try:
         models = load_models(models_dir)
     except Exception:
         log.warning("[startup] Artifacts unreadable or incompatible. Retraining once...", exc_info=True)
+    if models is not None:
+        reason = stale_reason(models, data_path)
+        if reason:
+            log.warning("[startup] Artifacts out of date (%s). Retraining once...", reason)
+            models = None
+    if models is None:
         train_all(data_path, models_dir)
         models = load_models(models_dir)
 
@@ -123,6 +131,14 @@ def create_app(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=GEOJSON_
             "data_loaded": ready,
             "error": request.app.state.startup_error,
         }
+
+    @app.get("/api/ready")
+    def ready(request: Request):
+        """Readiness probe for the hosting platform: 200 only when the app can serve.
+        Unlike /api/status (always 200, for people), this returns 503 after a failed startup.
+        Not rate limited, so frequent health checks cannot use up the budget."""
+        require_ready(request)
+        return {"ready": True}
 
     @app.get("/api/states")
     @limiter.limit("60/minute")
@@ -294,6 +310,8 @@ def create_app(data_path=DATA_PATH, models_dir=MODELS_DIR, geojson_path=GEOJSON_
         return {
             "training_date": train_date,
             "evaluation": bt["evaluation"],
+            "data_fingerprint": (bt.get("data_sha256") or "")[:12],
+            "library_versions": bt.get("library_versions", {}),
             "n_states": bt["n_states"],
             "n_folds": bt["n_folds"],
             "limitations": bt["limitations"],
